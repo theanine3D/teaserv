@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "baseline": "46ab6f106618060157b8fc99e840bb6be4f15c11",
+  "baseline": "82b8a0ef49c3800103f1648f57febafd338efd41",
   "surfaces": {
     "CMakeLists.txt": "Build both feature modes; inspect dependencies, tests, and revision generation.",
     "Dockerfile": "Preserve the teaserv executable container entry point.",

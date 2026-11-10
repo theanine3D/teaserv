@@ -4,6 +4,8 @@ Teaserv is a fork of Newserv created to enable online mod support for decomp/rec
 
 This fork builds `teaserv.exe` on Windows and `teaserv` on other platforms, in both extension build modes. Use that executable name in place of `newserv` in the upstream instructions below. The internal CMake target remains `newserv`.
 
+Note: AI assistance has been used in this project.
+
 ---
 
 newserv is a game server, proxy, and reverse-engineering tool for Phantasy Star Online (PSO). **To quickly get started using newserv, just read the [server setup](#server-setup) and [how to connect](#how-to-connect) sections.**

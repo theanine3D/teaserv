@@ -1,8 +1,10 @@
 # Extension integration map
 
-Upstream source baseline: `46ab6f106618060157b8fc99e840bb6be4f15c11`. This file records the small set of hooks to review after an upstream merge. Do not infer runtime compatibility from a clean textual merge.
+Upstream source baseline: `82b8a0ef49c3800103f1648f57febafd338efd41` (upstream newserv as of 2026-11-08, merged 2026-11-10; the previous baseline was `46ab6f106618060157b8fc99e840bb6be4f15c11`). This file records the small set of hooks to review after an upstream merge. Do not infer runtime compatibility from a clean textual merge.
 
 Use the [offline upstream audit](EXTENSIONS-UPSTREAM.md) before integrating a locally available upstream candidate. Its machine-readable [watch inventory](EXTENSIONS-UPSTREAM-WATCH.json) includes the hooks below and related services whose behavior can change without touching a hook. Update both maps when adding integration surfaces. The tool keeps the recorded baseline unchanged; advance it only after recording a successfully integrated upstream revision and its validation. A path report is not a substitute for inspecting changed callees or running compatibility checks.
+
+Integration record for `82b8a0ef`: no merge conflicts and no Teaserv file changed by the merge. Both feature modes build. All extension and static tests pass. Every `tests/*.test.sh` suite passes except `decode-gci-quest`, and `log-replays` fails some recorded sessions; both failures also occur in plain upstream on Windows/MinGW. A live Caelum client session passed: modpack offer and download, Caelum card lobbies, recoloured lobby media, and a card battle.
 
 | Upstream file/function | Addition and invariant |
 | --- | --- |
