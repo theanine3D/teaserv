@@ -1844,7 +1844,7 @@ struct C_Login_DC_PC_GC_9D {
   /* 10 */ le_uint32_t sub_version = 0;
   /* 14 */ uint8_t is_extended = 0; // If 1, structure has extended format
   /* 15 */ Language language = Language::JAPANESE;
-  /* 16 */ parray<uint8_t, 0x2> unused3; // Always zeroes
+  /* 16 */ parray<uint8_t, 0x2> unused3; // Stock: zeroes; Teaserv Ep3 PC media E3 01, Caelum mods + media E3 02 (byte pairs)
   /* 18 */ pstring<TextEncoding::ASCII, 0x10> v1_serial_number;
   /* 28 */ pstring<TextEncoding::ASCII, 0x10> v1_access_key;
   /* 38 */ pstring<TextEncoding::ASCII, 0x10> serial_number; // On XB, this is the XBL gamertag

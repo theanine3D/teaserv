@@ -14,6 +14,10 @@
 #include "ServerState.hh"
 #include "StaticGameData.hh"
 
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+#include "Extensions/Manager.hh"
+#endif
+
 std::vector<const ShellCommand*> ShellCommand::commands_by_order;
 std::unordered_map<std::string, const ShellCommand*> ShellCommand::commands_by_name;
 
@@ -111,6 +115,32 @@ static asio::awaitable<std::deque<std::string>> empty_handler(ShellCommand::Args
 ShellCommand c_nop1("", nullptr, empty_handler);
 ShellCommand c_nop2("//", nullptr, empty_handler);
 ShellCommand c_nop3("#", nullptr, empty_handler);
+
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+ShellCommand c_extensions(
+    "extensions", "extensions [list|info ID|scenes ID|check|reload|disable ID]\n    Inspect health/commands/scenes, validate without activation, reload, or unload local Lua extensions.",
+    +[](ShellCommand::Args& args) -> asio::awaitable<std::deque<std::string>> {
+      if (!args.s->extensions) {
+        throw std::runtime_error("extensions are unavailable in replay mode");
+      }
+      if (args.args.empty() || args.args == "list") {
+        co_return args.s->extensions->describe();
+      } else if (args.args == "check") {
+        co_return args.s->extensions->check();
+      } else if (args.args.starts_with("info ")) {
+        co_return args.s->extensions->info(args.args.substr(5));
+      } else if (args.args.starts_with("scenes ")) {
+        co_return args.s->extensions->scene_info(args.args.substr(7));
+      } else if (args.args == "reload") {
+        args.s->extensions->reload();
+      } else if (args.args.starts_with("disable ")) {
+        args.s->extensions->disable(args.args.substr(8));
+      } else {
+        throw std::runtime_error("usage: extensions [list|info ID|scenes ID|check|reload|disable ID]");
+      }
+      co_return args.s->extensions->describe();
+    });
+#endif
 
 ShellCommand c_help(
     "help", "help\n\

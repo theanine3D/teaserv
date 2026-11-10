@@ -339,6 +339,9 @@ ReplaySession::ReplaySession(std::shared_ptr<ServerState> state, FILE* input_log
     if (line.ends_with("\n")) {
       line.resize(line.size() - 1);
     }
+    if (line.ends_with("\r")) {
+      line.resize(line.size() - 1);
+    }
     if (line.empty()) {
       continue;
     }

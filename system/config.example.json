@@ -542,6 +542,11 @@
   // "Episode3LobbyBanners": [
   //   [1, 0x00000030, "test-image.bmp"],
   // ],
+  // Optional fourth filename: original-client fallback for this same type/location.
+  // Modified E3/01 clients receive the primary file; original clients receive the fallback.
+  // Every member of a texture/model/animation group at the same locations must supply
+  // a fallback if any member does. Fallbacks must fit 0x3800 PRS / <0x37000 raw bytes.
+  // Example: [1, 0x00000030, "large.gvm.prs", "small.gvm.prs"]
   "Episode3LobbyBanners": [],
 
   // Quest category configuration. See README.md for information on how quest files should be named. This list

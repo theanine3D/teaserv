@@ -769,54 +769,92 @@ void DataIndex::load_config_early() {
     this->ep3_card_auction_max_size = 0;
   }
 
-  this->ep3_lobby_banners.clear();
+  std::vector<Ep3LobbyBannerEntry> banners;
   size_t banner_index = 0;
   for (const auto& it : this->config_json->get("Episode3LobbyBanners", phosg::JSON::list()).as_list()) {
-    std::string path = "system/ep3/banners/" + it->at(2).as_string();
-
-    std::string compressed_gvm_data;
-    std::string decompressed_gvm_data;
-    std::string lower_path = phosg::tolower(path);
-    if (lower_path.ends_with(".gvm.prs")) {
-      compressed_gvm_data = phosg::load_file(path);
-    } else if (lower_path.ends_with(".gvm")) {
-      decompressed_gvm_data = phosg::load_file(path);
-    } else if (lower_path.ends_with(".bmp")) {
-      auto img = phosg::ImageRGBA8888N::from_file_data(phosg::load_file(path));
-      decompressed_gvm_data = encode_gvm(
-          img,
-          has_any_transparent_pixels(img) ? GVRDataFormat::RGB5A3 : GVRDataFormat::RGB565,
-          std::format("bnr{}", banner_index),
-          0x80 | banner_index);
-      banner_index++;
-    } else {
-      throw std::runtime_error(std::format("banner {} is in an unknown format", path));
+    const auto& fields = it->as_list();
+    if (fields.size() < 3 || fields.size() > 4) {
+      throw std::runtime_error("Episode3LobbyBanners entries require [type, locations, filename, optional fallback filename]");
     }
-
-    size_t decompressed_size = decompressed_gvm_data.empty()
-        ? prs_decompress_size(compressed_gvm_data)
-        : decompressed_gvm_data.size();
-    if (decompressed_size > 0x37000) {
-      throw std::runtime_error(std::format(
-          "banner {} is too large (0x{:X} bytes; maximum size is 0x37000 bytes)", path, decompressed_size));
+    int64_t type = it->at(0).as_int();
+    int64_t locations = it->at(1).as_int();
+    if (type < 1 || type > 3 || locations <= 0 || locations > 0xFFFFFFFFLL) {
+      throw std::runtime_error("Episode3LobbyBanners requires media type 1..3 and nonzero 32-bit locations");
     }
-
-    if (compressed_gvm_data.empty()) {
-      compressed_gvm_data = prs_compress_optimal(decompressed_gvm_data);
+    uint32_t texture_index = 0x80 | banner_index;
+    bool encoded_bitmap = false;
+    auto load_banner = [&](const std::string& filename, Episode3::LobbyMediaProfile profile) {
+      std::string path = "system/ep3/banners/" + filename;
+      std::string compressed;
+      std::string decompressed;
+      auto lower_path = phosg::tolower(path);
+      bool native = lower_path.ends_with(".gvm") || lower_path.ends_with(".gvm.prs") ||
+          (type != 1 && (lower_path.ends_with(".bml") || lower_path.ends_with(".bml.prs")));
+      if (native && lower_path.ends_with(".prs")) {
+        compressed = phosg::load_file(path);
+        if (compressed.size() > Episode3::lobby_media_compressed_limit(profile)) {
+          throw std::runtime_error(std::format("banner {} exceeds its profile's compressed limit", path));
+        }
+      } else if (native) {
+        decompressed = phosg::load_file(path);
+      } else if (type == 1 && lower_path.ends_with(".bmp")) {
+        encoded_bitmap = true;
+        auto img = phosg::ImageRGBA8888N::from_file_data(phosg::load_file(path));
+        decompressed = encode_gvm(img,
+            has_any_transparent_pixels(img) ? GVRDataFormat::RGB5A3 : GVRDataFormat::RGB565,
+            std::format("bnr{}", banner_index), texture_index);
+      } else {
+        throw std::runtime_error(std::format("banner {} is in an unknown format", path));
+      }
+      size_t decompressed_size = decompressed.empty()
+          ? prs_decompress_size(compressed, Episode3::lobby_media_decompressed_limit(profile)) : decompressed.size();
+      if (decompressed_size > Episode3::lobby_media_decompressed_limit(profile)) {
+        throw std::runtime_error(std::format("banner {} exceeds its profile's decompressed limit", path));
+      }
+      if (compressed.empty()) {
+        compressed = prs_compress_optimal(decompressed);
+      }
+      auto compatibility = Episode3::lobby_media_compatibility(compressed.size(), decompressed_size);
+      if (!compatibility.accepts(profile)) {
+        throw std::runtime_error(std::format("banner {} cannot fit its native media profile", path));
+      }
+      config_log.info_f("Loaded Episode 3 lobby banner {} (0x{:X} -> 0x{:X} bytes)",
+          path, decompressed_size, compressed.size());
+      return Ep3LobbyBannerEntry{static_cast<uint32_t>(type), static_cast<uint32_t>(locations),
+          std::make_shared<const std::string>(std::move(compressed)), compatibility};
+    };
+    auto banner = load_banner(it->at(2).as_string(), Episode3::LobbyMediaProfile::PC_PORT);
+    if (fields.size() == 4) {
+      banner.fallback_data = load_banner(it->at(3).as_string(), Episode3::LobbyMediaProfile::ORIGINAL).data;
     }
-    if (compressed_gvm_data.size() > 0x3800) {
-      throw std::runtime_error(std::format(
-          "banner {} cannot be compressed small enough (0x{:X} bytes; maximum size is 0x3800 bytes compressed)",
-          it->at(2).as_string(), compressed_gvm_data.size()));
+    if (encoded_bitmap) {
+      ++banner_index;
     }
-    config_log.info_f(
-        "Loaded Episode 3 lobby banner {} (0x{:X} -> 0x{:X} bytes)",
-        path, decompressed_size, compressed_gvm_data.size());
-    this->ep3_lobby_banners.emplace_back(
-        Ep3LobbyBannerEntry{.type = static_cast<uint32_t>(it->at(0).as_int()),
-            .which = static_cast<uint32_t>(it->at(1).as_int()),
-            .data = std::move(compressed_gvm_data)});
+    banners.emplace_back(std::move(banner));
   }
+  // A texture/model/motion group must never mix variants or lose a dependency.
+  struct FallbackGroup {
+    size_t members = 0;
+    size_t fallbacks = 0;
+    uint32_t types = 0;
+    bool duplicate = false;
+  };
+  std::map<uint32_t, FallbackGroup> fallback_groups;
+  for (const auto& banner : banners) {
+    auto& counts = fallback_groups[banner.locations];
+    ++counts.members;
+    counts.fallbacks += static_cast<bool>(banner.fallback_data);
+    uint32_t bit = 1 << banner.type;
+    counts.duplicate |= static_cast<bool>(counts.types & bit);
+    counts.types |= bit;
+  }
+  for (const auto& [locations, counts] : fallback_groups) {
+    if (counts.fallbacks && (counts.members != counts.fallbacks || counts.duplicate ||
+            !(counts.types & (1 << 1)) || ((counts.types & (1 << 3)) && !(counts.types & (1 << 2))))) {
+      throw std::runtime_error(std::format("media group {:08X} requires complete, unambiguous fallback dependencies", locations));
+    }
+  }
+  this->ep3_lobby_banners.swap(banners);
 
   {
     auto parse_ep3_ex_result_cmd = [&](const phosg::JSON& src) -> std::shared_ptr<G_SetEXResultValues_Ep3_6xB4x4B> {

@@ -4,6 +4,9 @@
 #include <string.h>
 
 #include <memory>
+#include <cstdlib>
+#include <fstream>
+#include <filesystem>
 #include <phosg/Filesystem.hh>
 #include <phosg/Hash.hh>
 #include <phosg/Network.hh>
@@ -14,6 +17,9 @@
 #include "ChatCommands.hh"
 #include "Compression.hh"
 #include "Episode3/Tournament.hh"
+#include "Episode3/LobbyMediaCapabilities.hh"
+#include "Episode3/Modpacks.hh"
+#include "Episode3/CaelumLobbies.hh"
 #include "ExpressionEnvironment.hh"
 #include "GameServer.hh"
 #include "HTTPServer.hh"
@@ -26,6 +32,10 @@
 #include "SendCommands.hh"
 #include "StaticGameData.hh"
 #include "Text.hh"
+
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+#include "Extensions/Manager.hh"
+#endif
 
 const char* BATTLE_TABLE_DISCONNECT_HOOK_NAME = "battle_table_state";
 const char* QUEST_BARRIER_DISCONNECT_HOOK_NAME = "quest_barrier";
@@ -69,6 +79,13 @@ asio::awaitable<void> on_connect(std::shared_ptr<Client> c) {
 }
 
 asio::awaitable<void> on_disconnect(std::shared_ptr<Client> c) {
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (auto server = c->server.lock()) {
+    if (auto extensions = server->get_state()->extensions) {
+      extensions->disconnected(c->id);
+    }
+  }
+#endif
   // If the client was in a lobby, remove them and notify the other clients
   auto l = c->lobby.lock();
   if (l) {
@@ -290,6 +307,12 @@ asio::awaitable<void> start_login_server_procedure(std::shared_ptr<Client> c) {
     s->remove_client_from_lobby(c);
   }
 
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (s->extensions) {
+    s->extensions->client_logged_in(c);
+  }
+#endif
+
   if (s->data->pre_lobby_event && (!is_ep3(c->version()) || s->data->ep3_menu_song < 0)) {
     send_change_event(c, s->data->pre_lobby_event);
   }
@@ -313,9 +336,17 @@ asio::awaitable<void> start_login_server_procedure(std::shared_ptr<Client> c) {
       c->set_flag(Client::Flag::HAS_EP3_CARD_DEFS);
     }
     if ((c->version() != Version::GC_EP3_NTE) && !c->check_flag(Client::Flag::HAS_EP3_MEDIA_UPDATES)) {
-      for (const auto& banner : s->data->ep3_lobby_banners) {
-        send_ep3_media_update(c, banner.type, banner.which, banner.data);
-        c->set_flag(Client::Flag::HAS_EP3_MEDIA_UPDATES);
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+      if (s->extensions) {
+        s->extensions->send_login_media(c);
+      } else
+#endif
+      {
+        for (const auto& banner : Episode3::select_lobby_media(ep3_media_profile_for_client(c), s->data->ep3_lobby_banners)) {
+          if (send_ep3_media_update(c, banner.type, banner.locations, *banner.data)) {
+            c->set_flag(Client::Flag::HAS_EP3_MEDIA_UPDATES);
+          }
+        }
       }
     }
     s->ep3_tournament_index->link_client(c);
@@ -341,6 +372,30 @@ asio::awaitable<void> start_login_server_procedure(std::shared_ptr<Client> c) {
 static asio::awaitable<void> on_login_complete(std::shared_ptr<Client> c) {
   auto s = c->require_server_state();
 
+  if(c->caelum_mod_capable && !c->caelum_mod_ready) {
+    // Only authenticated native Caelum sessions receive this extension. Stock
+    // clients and Newserv-compatible logins never see an unknown command.
+    if(c->caelum_mod_pending)co_return;
+    std::string manifest="CMOD1\n";
+    const char* env=std::getenv("CAELUM_MODPACK_MANIFEST");
+    std::string filename=env?env:"system/caelum-modpacks.txt";
+    if(std::filesystem::is_regular_file(filename)) {
+      std::ifstream in(filename,std::ios::binary);char bytes[30001];
+      in.read(bytes,sizeof(bytes));
+      if(in.gcount()>30000)throw std::runtime_error("Caelum mod manifest exceeds 30 KB");
+      if(in.bad())throw std::runtime_error("Cannot read Caelum mod manifest");
+      manifest.assign(bytes,static_cast<size_t>(in.gcount()));
+    }
+    caelum::mods::parse_manifest(manifest); // reject malformed server config before sending
+    c->caelum_mod_pending=true;
+    c->send_ping_timer.cancel();
+    c->idle_timeout_timer.expires_after(std::chrono::minutes(30));
+    c->idle_timeout_timer.async_wait([weak=std::weak_ptr<Client>(c)](std::error_code ec){
+      if(!ec)if(auto client=weak.lock())client->channel->disconnect();
+    });
+    send_command(c,0xF2,1,manifest);
+    co_return;
+  }
   c->convert_account_to_temporary_if_nte();
 
   if (!is_v4(c->version())) {
@@ -491,6 +546,11 @@ asio::awaitable<void> start_proxy_session(std::shared_ptr<Client> c, const std::
         false,
         s->data->censor_credentials);
     c->proxy_session = std::make_shared<ProxySession>(channel, pc);
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+    if (s->extensions) {
+      s->extensions->proxy_started(c->id);
+    }
+#endif
 
     if (c->version() == Version::GC_EP3) {
       send_ep3_media_update(c, 4, 0, "");
@@ -1206,6 +1266,11 @@ static asio::awaitable<void> on_9C(std::shared_ptr<Client> c, Channel::Message& 
 }
 
 static asio::awaitable<void> on_9D_9E(std::shared_ptr<Client> c, Channel::Message& msg) {
+  // Clear before shape validation/authentication, including failed repeat logins.
+  c->ep3_extended_media = false;
+  c->caelum_mod_capable = false;
+  c->caelum_mod_pending = false;
+  c->caelum_mod_ready = false;
   const C_Login_DC_PC_GC_9D* base_cmd;
   auto s = c->require_server_state();
 
@@ -1298,6 +1363,16 @@ static asio::awaitable<void> on_9D_9E(std::shared_ptr<Client> c, Channel::Messag
       }
       default:
         throw std::logic_error("unsupported versioned command");
+    }
+
+    // Normal version selection and this attempt's authentication have succeeded.
+    // Do this before on_login_complete can send configured lobby media.
+    c->ep3_extended_media = c->version() == Version::GC_EP3 && c->login &&
+        !c->proxy_session && !s->is_replay &&
+        Episode3::lobby_media_login_marker(base_cmd->unused3[0], base_cmd->unused3[1]);
+    c->caelum_mod_capable = c->ep3_extended_media && base_cmd->unused3[1] == 0x02;
+    if (c->ep3_extended_media) {
+      c->log.info_f("Episode 3 lobby media: E3/01 receive capability (PC profile)");
     }
 
   } catch (const AccountIndex::no_username& e) {
@@ -2431,6 +2506,9 @@ static void on_quest_loaded(std::shared_ptr<Lobby> l) {
       lc->log.info_f("Created battle overlay");
     }
   }
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (s->extensions) s->extensions->quest_map_loaded(l);
+#endif
 }
 
 void set_lobby_quest(std::shared_ptr<Lobby> l, std::shared_ptr<const Quest> q, bool substitute_v3_for_ep3) {
@@ -2471,6 +2549,10 @@ void set_lobby_quest(std::shared_ptr<Lobby> l, std::shared_ptr<const Quest> q, b
     l->difficulty = l->quest->meta.challenge_difficulty;
   }
   l->create_item_creator();
+
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (s->extensions) s->extensions->quest_assigned(l);
+#endif
 
   size_t num_clients_with_loading_flag = 0;
   for (size_t client_id = 0; client_id < l->max_clients; client_id++) {
@@ -3105,6 +3187,10 @@ static asio::awaitable<void> on_84(std::shared_ptr<Client> c, Channel::Message& 
     // If the client already is in a lobby, then they're using the lobby teleporter; add them to the lobby they
     // requested or send a failure message.
     auto new_lobby = s->find_lobby(cmd.item_id);
+    if (new_lobby && new_lobby->check_flag(Lobby::Flag::CAELUM_EXTRA) &&
+        !caelum::lobbies::visible_to(c->version(), c->caelum_mod_ready)) {
+      new_lobby = nullptr;
+    }
     if (!new_lobby) {
       send_lobby_message_box(c, "$C6Can't change lobby\n\n$C7The lobby does not\nexist.");
       co_return;
@@ -3292,6 +3378,11 @@ static asio::awaitable<void> on_AC_V3_BB(std::shared_ptr<Client> c, Channel::Mes
     if (l->quest && send_quest_barrier_if_all_clients_ready(l)) {
       on_quest_loaded(l);
     }
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+    if (auto s = c->require_server_state(); s->extensions) {
+      s->extensions->quest_load_acknowledged(c, l);
+    }
+#endif
   }
   co_return;
 }
@@ -4994,6 +5085,10 @@ static asio::awaitable<void> on_6F(std::shared_ptr<Client> c, Channel::Message& 
 
   // Episode 3 sends a 6F after a CAx21 (end battle) command, so we shouldn't reassign the item IDs again in that case
   // (even though item IDs really don't matter for Ep3)
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  const bool extension_was_loading = c->check_flag(Client::Flag::LOADING);
+  bool extension_joinable_ready = false;
+#endif
   if (c->check_flag(Client::Flag::LOADING)) {
     c->clear_flag(Client::Flag::LOADING);
     c->log.info_f("LOADING flag cleared");
@@ -5070,6 +5165,9 @@ static asio::awaitable<void> on_6F(std::shared_ptr<Client> c, Channel::Message& 
     } else if ((msg.command == 0x016F) && c->check_flag(Client::Flag::LOADING_RUNNING_JOINABLE_QUEST)) {
       c->clear_flag(Client::Flag::LOADING_RUNNING_JOINABLE_QUEST);
       c->log.info_f("LOADING_RUNNING_JOINABLE_QUEST flag cleared");
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+      extension_joinable_ready = true;
+#endif
     }
     send_rare_enemy_index_list(c, l->map_state->bb_rare_enemy_indexes);
   }
@@ -5089,6 +5187,12 @@ static asio::awaitable<void> on_6F(std::shared_ptr<Client> c, Channel::Message& 
   // If there are more players to bring in, try to do so
   c->disconnect_hooks.erase(ADD_NEXT_CLIENT_DISCONNECT_HOOK_NAME);
   add_next_game_client(l);
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (auto s = c->require_server_state(); s->extensions) {
+    s->extensions->game_join_ready(c, l, extension_was_loading, msg.command == 0x006F);
+    if (extension_joinable_ready) s->extensions->quest_join_acknowledged(c, l, true);
+  }
+#endif
 }
 
 static asio::awaitable<void> on_99(std::shared_ptr<Client> c, Channel::Message& msg) {
@@ -5967,7 +6071,19 @@ static void check_logged_out_command(Version version, uint8_t command) {
 }
 
 asio::awaitable<void> on_command(std::shared_ptr<Client> c, std::unique_ptr<Channel::Message> msg) {
-  c->reschedule_ping_and_timeout_timers();
+  if (!c->caelum_mod_pending)c->reschedule_ping_and_timeout_timers();
+  if(c->caelum_mod_pending) {
+    if(msg->command==0x1D)co_return; // an earlier keepalive may already be queued
+    if(msg->command!=0xF2 || !msg->data.empty() || (msg->flag!=2 && msg->flag!=3)) {
+      c->channel->disconnect();co_return;
+    }
+    c->caelum_mod_pending=false;
+    c->reschedule_ping_and_timeout_timers();
+    if(msg->flag==3){c->channel->disconnect();co_return;}
+    c->caelum_mod_ready=true;
+    co_await on_login_complete(c);
+    co_return;
+  }
 
   // Most of the command handlers assume the client is registered, logged in, and not banned (and therefore that
   // c->login is not null), so the client is allowed to access normal functionality. This check prevents clients from

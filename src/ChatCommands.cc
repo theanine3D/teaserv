@@ -23,6 +23,10 @@
 #include "StaticGameData.hh"
 #include "Text.hh"
 
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+#include "Extensions/Manager.hh"
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Tools
 
@@ -185,6 +189,12 @@ struct ChatCommandDefinition {
 };
 
 std::unordered_map<std::string, const ChatCommandDefinition*> ChatCommandDefinition::all_defs;
+
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+bool is_builtin_chat_command(const std::string& name) {
+  return ChatCommandDefinition::all_defs.count(name);
+}
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // All commands (in alphabetical order)
@@ -3222,6 +3232,12 @@ asio::awaitable<void> on_chat_command(std::shared_ptr<Client> c, const std::stri
   } catch (const std::out_of_range&) {
   }
   if (!def) {
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+    auto s = c->require_server_state();
+    if (s->extensions && s->extensions->dispatch(c, cmd.name, cmd.args)) {
+      co_return;
+    }
+#endif
     send_text_message(c, "$C6Unknown command");
     co_return;
   }

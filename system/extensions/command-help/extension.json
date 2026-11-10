@@ -1,0 +1,8 @@
+{
+  "id": "command-help",
+  "version": "0.1.0",
+  "api_version": 1,
+  "entry": "main.lua",
+  "permissions": ["commands", "commands.read", "chat.reply"],
+  "dependencies": []
+}

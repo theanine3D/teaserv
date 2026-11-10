@@ -1,0 +1,9 @@
+{
+  "id": "session-audit",
+  "version": "0.1.0",
+  "api_version": 1,
+  "storage_version": 1,
+  "entry": "main.lua",
+  "permissions": ["events", "storage"],
+  "dependencies": []
+}

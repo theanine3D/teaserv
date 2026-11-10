@@ -1,0 +1,10 @@
+{
+  "id": "lobby-decor",
+  "version": "0.1.0",
+  "api_version": 1,
+  "entry": "main.lua",
+  "permissions": ["commands", "events", "chat.reply", "scene.media", "scene.event"],
+  "assets": {
+    "checker": {"texture": "assets/checker.bmp"}
+  }
+}

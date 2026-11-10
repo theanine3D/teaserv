@@ -1,0 +1,15 @@
+{
+  "id": "server-announcements",
+  "version": "0.1.0",
+  "api_version": 1,
+  "entry": "main.lua",
+  "permissions": ["commands", "events", "chat.reply", "chat.announce"],
+  "dependencies": [],
+  "settings": {
+    "game_opened_message": {
+      "type": "string",
+      "default": "A new game is available.",
+      "max_bytes": 200
+    }
+  }
+}

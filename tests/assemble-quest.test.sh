@@ -4,7 +4,7 @@ set -e
 
 EXECUTABLE="$1"
 if [ -z "$EXECUTABLE" ]; then
-  EXECUTABLE="./newserv"
+  EXECUTABLE="./teaserv"
 fi
 
 echo "... assemble system/quests/retrieval/q058-gc-e.bin.txt"

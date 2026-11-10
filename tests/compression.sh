@@ -6,7 +6,7 @@ SCHEME=$1
 
 EXECUTABLE="$2"
 if [ -z "$EXECUTABLE" ]; then
-  EXECUTABLE="./newserv"
+  EXECUTABLE="./teaserv"
 fi
 
 BASENAME="card-defs-test-$SCHEME"

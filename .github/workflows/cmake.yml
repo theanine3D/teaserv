@@ -2,9 +2,9 @@ name: CMake
 
 on:
   push:
-    branches: [master]
+    branches: [master, extensions]
   pull_request:
-    branches: [master]
+    branches: [master, extensions]
 
 permissions:
   contents: read
@@ -17,6 +17,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         build_type: [Debug, Release]
+        extensions: ['OFF', 'ON']
 
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +25,16 @@ jobs:
       - name: Install libraries (Linux)
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: sudo apt-get install -y cmake libasio-dev libasan8
+
+      - name: Install Lua (Linux, extensions enabled)
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.extensions == 'ON' }}
+        run: sudo apt-get install -y liblua5.4-dev
+
+      - name: Install Lua (macOS, extensions enabled)
+        if: ${{ matrix.os == 'macos-latest' && matrix.extensions == 'ON' }}
+        run: |
+          brew install lua@5.4
+          echo "CMAKE_PREFIX_PATH=$(brew --prefix lua@5.4)" >> "$GITHUB_ENV"
 
       - name: Install libraries (macOS)
         if: ${{ matrix.os == 'macos-latest' }}
@@ -55,7 +66,7 @@ jobs:
           sudo make install
 
       - name: Configure CMake
-        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{matrix.build_type}}
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{matrix.build_type}} -DNEWSERV_ENABLE_EXTENSIONS=${{matrix.extensions}}
 
       - name: Build
         run: cmake --build ${{github.workspace}}/build --config ${{matrix.build_type}} -j $(nproc)

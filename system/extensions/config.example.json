@@ -1,0 +1,22 @@
+{
+  "Extensions": {
+    "Enabled": true,
+    "Packages": [
+      {
+        "id": "chat-tools",
+        "grants": [
+          "commands",
+          "events",
+          "timers",
+          "storage",
+          "chat.reply",
+          "chat.broadcast",
+          "chat.whisper"
+        ],
+        "Settings": {
+          "shout_cooldown_ms": 10000
+        }
+      }
+    ]
+  }
+}

@@ -1,5 +1,7 @@
 #include "ServerState.hh"
 
+#include "Episode3/CaelumLobbies.hh"
+
 #include <string.h>
 
 #include <filesystem>
@@ -20,6 +22,10 @@
 #include "Text.hh"
 #include "TextIndex.hh"
 
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+#include "Extensions/Manager.hh"
+#endif
+
 std::shared_ptr<ServerState> ServerState::create_shared(std::shared_ptr<DataIndex> data, bool is_replay) {
   std::shared_ptr<ServerState> s(new ServerState());
   s->data = data;
@@ -36,6 +42,9 @@ std::shared_ptr<ServerState> ServerState::create_shared(std::shared_ptr<DataInde
   s->load_ep3_tournament_state();
   s->create_default_lobbies();
   s->load_teams();
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  s->extensions = teaserv::extensions::Manager::create(s);
+#endif
   return s;
 }
 
@@ -49,6 +58,9 @@ std::shared_ptr<ServerState> ServerState::clone_shared() {
   ret->load_ep3_tournament_state();
   ret->create_default_lobbies();
   ret->load_teams();
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  ret->extensions = teaserv::extensions::Manager::create(ret);
+#endif
   return ret;
 }
 
@@ -109,11 +121,21 @@ void ServerState::add_client_to_available_lobby(std::shared_ptr<Client> c, bool 
 
   // Send a join message to the joining player, and notifications to all others
   this->send_lobby_join_notifications(added_to_lobby, c);
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (this->extensions) {
+    this->extensions->lobby_event("lobby_join", c, added_to_lobby);
+  }
+#endif
 }
 
 void ServerState::remove_client_from_lobby(std::shared_ptr<Client> c) {
   auto l = c->lobby.lock();
   if (l) {
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+    if (this->extensions) {
+      this->extensions->lobby_event("lobby_leave", c, l);
+    }
+#endif
     uint8_t old_client_id = c->lobby_client_id;
     l->remove_client(c);
     this->on_player_left_lobby(l, old_client_id);
@@ -141,10 +163,23 @@ bool ServerState::change_client_lobby(
   if (send_join_notification) {
     this->send_lobby_join_notifications(new_lobby, c);
   }
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (this->extensions) {
+    if (current_lobby) {
+      this->extensions->lobby_event("lobby_leave", c, current_lobby);
+    }
+    this->extensions->lobby_event("lobby_join", c, new_lobby);
+  }
+#endif
   return true;
 }
 
 void ServerState::send_lobby_join_notifications(std::shared_ptr<Lobby> l, std::shared_ptr<Client> joining_client) {
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (this->extensions) {
+    this->extensions->prepare_scene(joining_client, l);
+  }
+#endif
   for (auto& other_client : l->clients) {
     if (!other_client) {
       continue;
@@ -242,6 +277,9 @@ void ServerState::remove_lobby(std::shared_ptr<Lobby> l) {
 
   l->log.info_f("Unlinking lobby from index");
   this->id_to_lobby.erase(lobby_it);
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  if (this->extensions) this->extensions->game_closed(l);
+#endif
 }
 
 void ServerState::on_player_left_lobby(std::shared_ptr<Lobby> l, uint8_t leaving_client_id) {
@@ -347,6 +385,36 @@ void ServerState::create_default_lobbies() {
       l->episode = Episode::EP3;
     }
   }
+
+  // Caelum extra lobbies (lobby numbers 20+): listed and joinable only after the Caelum modpack handshake
+  const char* env = std::getenv("CAELUM_LOBBIES");
+  const std::string filename = env ? env : "system/caelum-lobbies.txt";
+  if (std::filesystem::is_regular_file(filename)) {
+    try {
+      for (const auto& extra : caelum::lobbies::parse(phosg::load_file(filename))) {
+        // A fixed ID outside the sequential range, so the IDs of later games stay what they were without extras
+        const uint32_t lobby_id = caelum::lobbies::LOBBY_ID_BASE + extra.number;
+        if (this->id_to_lobby.count(lobby_id)) {
+          throw std::runtime_error(std::format("lobby ID {:08X} is in use", lobby_id));
+        }
+        auto l = std::make_shared<Lobby>(this->shared_from_this(), lobby_id, false);
+        this->id_to_lobby.emplace(l->lobby_id, l);
+        l->idle_timeout_usecs = this->data->persistent_game_idle_timeout_usecs;
+        l->event = this->data->pre_lobby_event;
+        l->set_flag(Lobby::Flag::PUBLIC);
+        l->set_flag(Lobby::Flag::PERSISTENT);
+        l->set_flag(Lobby::Flag::CAELUM_EXTRA);
+        l->allow_version(Version::GC_EP3);
+        l->block = extra.number + 1; // the 67 lobby number is block - 1
+        l->name = extra.name;
+        l->max_clients = 12;
+        l->episode = Episode::EP3;
+        config_log.info_f("Caelum extra lobby {} ({}): lobby ID {:08X}", extra.number, extra.name, l->lobby_id);
+      }
+    } catch (const std::exception& e) {
+      config_log.error_f("Caelum extra lobbies not created: {}", e.what());
+    }
+  }
 }
 
 void ServerState::update_default_lobby_events_from_config() {
@@ -373,7 +441,7 @@ void ServerState::reset_between_replays() {
   for (const auto& l : this->all_lobbies()) {
     if (l->is_game()) {
       lobbies_to_delete.emplace_back(l);
-    } else {
+    } else if (!l->check_flag(Lobby::Flag::CAELUM_EXTRA)) {   // fixed IDs outside the sequence
       this->next_lobby_id = std::max<uint32_t>(this->next_lobby_id, l->lobby_id + 1);
     }
   }

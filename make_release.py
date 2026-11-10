@@ -26,8 +26,8 @@ def main():
     os.mkdir("release")
 
     print("Adding executables")
-    shutil.copy("newserv", "release/newserv-macos")
-    shutil.copy("newserv.exe", "release/newserv-windows.exe")
+    shutil.copy("teaserv", "release/teaserv-macos")
+    shutil.copy("teaserv.exe", "release/teaserv-windows.exe")
     shutil.copy("README.md", "release/README.md")
 
     print("Adding system directory")

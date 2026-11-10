@@ -17,6 +17,7 @@
 #include "DNSServer.hh"
 #include "DOLFileIndex.hh"
 #include "Episode3/DataIndexes.hh"
+#include "Episode3/LobbyMedia.hh"
 #include "Episode3/Tournament.hh"
 #include "GSLArchive.hh"
 #include "IPV4RangeSet.hh"
@@ -270,11 +271,7 @@ struct DataIndex {
   };
   std::vector<CardAuctionPoolEntry> ep3_card_auction_pool;
   std::array<std::vector<uint16_t>, 5> ep3_trap_card_ids;
-  struct Ep3LobbyBannerEntry {
-    uint32_t type = 1;
-    uint32_t which; // See B9 documentation in CommandFormats.hh
-    std::string data;
-  };
+  using Ep3LobbyBannerEntry = Episode3::LobbyMediaUpdate;
   std::vector<Ep3LobbyBannerEntry> ep3_lobby_banners;
 
   std::shared_ptr<const IPV4RangeSet> banned_ipv4_ranges;

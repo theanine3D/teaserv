@@ -21,6 +21,10 @@
 #include "StaticGameData.hh"
 #include "Text.hh"
 
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+#include "Extensions/Manager.hh"
+#endif
+
 // The functions in this file are called when a client sends a game command (60, 62, 6C, 6D, C9, or CB).
 
 struct SubcommandMessage {
@@ -1643,6 +1647,9 @@ static void on_set_player_visible(std::shared_ptr<Client> c, SubcommandMessage& 
       } else if (c->check_flag(Client::Flag::LOADING_RUNNING_JOINABLE_QUEST) && (c->version() != Version::BB_V4)) {
         c->clear_flag(Client::Flag::LOADING_RUNNING_JOINABLE_QUEST);
         c->log.info_f("LOADING_RUNNING_JOINABLE_QUEST flag cleared");
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+        if (auto s = c->require_server_state(); s->extensions) s->extensions->quest_join_acknowledged(c, l, false);
+#endif
       }
     }
   }

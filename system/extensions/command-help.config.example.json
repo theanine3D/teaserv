@@ -1,0 +1,8 @@
+{
+  "Extensions": {
+    "Enabled": true,
+    "Packages": [
+      {"id": "command-help", "grants": ["commands", "commands.read", "chat.reply"]}
+    ]
+  }
+}

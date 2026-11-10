@@ -132,6 +132,12 @@ public:
   uint32_t xb_unknown_a1b = 0;
   std::shared_ptr<Login> login;
   std::shared_ptr<ProxySession> proxy_session;
+  // Receive-only E3/01 advertisement from this connection's authenticated 9D/9E.
+  // Never persisted in the account, character, or client security data.
+  bool ep3_extended_media = false;
+  bool caelum_mod_capable = false;
+  bool caelum_mod_pending = false;
+  bool caelum_mod_ready = false;
 
   // Patch server state (only used for PC_PATCH and BB_PATCH versions)
   std::vector<PatchFileChecksumRequest> patch_file_checksum_requests;

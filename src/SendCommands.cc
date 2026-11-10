@@ -1,5 +1,9 @@
 #include "SendCommands.hh"
 
+#include <algorithm>
+
+#include "Episode3/CaelumLobbies.hh"
+
 #include <inttypes.h>
 #include <string.h>
 
@@ -14,6 +18,7 @@
 
 #include "CommandFormats.hh"
 #include "Compression.hh"
+#include "Episode3/LobbyMediaCapabilities.hh"
 #include "GameServer.hh"
 #include "PSOProtocol.hh"
 #include "ReceiveSubcommands.hh"
@@ -1770,6 +1775,26 @@ void send_lobby_list(std::shared_ptr<Client> c) {
     e.player_count = l->count_clients();
   }
 
+  // Caelum extra lobbies: entry index = lobby number (block - 1), so they follow exactly 20 default entries
+  if (caelum::lobbies::visible_to(c->version(), c->caelum_mod_ready) && entries.size() == caelum::lobbies::FIRST_NUMBER) {
+    std::vector<std::shared_ptr<Lobby>> extras;
+    for (std::shared_ptr<Lobby> l : s->all_lobbies()) {
+      if (l->check_flag(Lobby::Flag::CAELUM_EXTRA)) {
+        extras.emplace_back(l);
+      }
+    }
+    std::sort(extras.begin(), extras.end(), [](const auto& a, const auto& b) { return a->block < b->block; });
+    for (const auto& l : extras) {
+      if (l->block != entries.size() + 1) {
+        break; // a gap would shift every later lobby
+      }
+      auto& e = entries.emplace_back();
+      e.menu_id = MenuID::LOBBY;
+      e.item_id = l->lobby_id;
+      e.player_count = l->count_clients();
+    }
+  }
+
   send_command_vt(c, 0x83, entries.size(), entries);
 }
 
@@ -3325,14 +3350,32 @@ void send_ep3_card_list_update(std::shared_ptr<Client> c) {
   }
 }
 
-void send_ep3_media_update(std::shared_ptr<Client> c, uint32_t type, uint32_t which, const std::string& compressed_data) {
-  phosg::StringWriter w;
-  w.put<S_UpdateMediaHeader_Ep3_B9>({type, which, compressed_data.size(), 0});
-  w.write(compressed_data);
-  while (w.size() & 3) {
-    w.put_u8(0);
+Episode3::LobbyMediaProfile ep3_media_profile_for_client(std::shared_ptr<Client> c) {
+  if (c->version() != Version::GC_EP3 || !c->login || c->proxy_session) {
+    return Episode3::LobbyMediaProfile::ORIGINAL;
   }
-  send_command(c, 0xB9, 0x00, w.str());
+  auto s = c->require_server_state();
+  return Episode3::lobby_media_profile_for_session(c->version(), true, false, s->is_replay,
+      c->ep3_extended_media);
+}
+
+bool send_ep3_media_update(std::shared_ptr<Client> c, uint32_t type, uint32_t which, const std::string& compressed_data) {
+  if (c->version() != Version::GC_EP3 || !c->channel->connected()) {
+    return false;
+  }
+  auto profile = ep3_media_profile_for_client(c);
+  if (type != 4) {
+    if (compressed_data.empty() || compressed_data.size() > Episode3::lobby_media_compressed_limit(profile)) {
+      return false;
+    }
+    size_t decompressed = prs_decompress_size(compressed_data, Episode3::LOBBY_MEDIA_PC_DECOMPRESSED);
+    if (!Episode3::lobby_media_compatibility(compressed_data.size(), decompressed).accepts(profile)) {
+      return false;
+    }
+  }
+  auto body = Episode3::encode_lobby_media_body(type, which, compressed_data);
+  send_command(c, 0xB9, 0x00, body);
+  return true;
 }
 
 void send_ep3_rank_update(std::shared_ptr<Client> c) {

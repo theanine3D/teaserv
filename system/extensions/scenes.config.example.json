@@ -1,0 +1,12 @@
+{
+  "Extensions": {
+    "Enabled": true,
+    "Scenes": {"Enabled": true, "ExperimentalModels": false},
+    "Packages": [
+      {
+        "id": "lobby-decor",
+        "grants": ["commands", "events", "chat.reply", "scene.media", "scene.event"]
+      }
+    ]
+  }
+}

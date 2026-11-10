@@ -22,6 +22,25 @@ TextTranscoder::~TextTranscoder() {
   iconv_close(this->ic);
 }
 
+size_t TextTranscoder::bytes_before_custom(const void*, size_t size) const {
+  return size;
+}
+
+size_t TextTranscoder::convert(char** dest, size_t* dest_bytes, const void** src, size_t* src_bytes) {
+  // Some iconv implementations accept Sega's custom bytes as private-use
+  // Unicode. Stop before them so the existing custom handler takes precedence.
+  size_t prefix_bytes = this->bytes_before_custom(*src, *src_bytes);
+  if (!prefix_bytes) {
+    errno = EILSEQ;
+    return this->FAILURE_RESULT;
+  }
+  size_t remaining = prefix_bytes;
+  size_t result = iconv(this->ic, reinterpret_cast<char**>(const_cast<void**>(src)),
+      &remaining, dest, dest_bytes);
+  *src_bytes -= prefix_bytes - remaining;
+  return result;
+}
+
 TextTranscoder::Result TextTranscoder::operator()(
     void* dest, size_t dest_bytes, const void* src, size_t src_bytes, bool truncate_oversize_result) {
   // Clear any conversion state left over from the previous call
@@ -31,12 +50,9 @@ TextTranscoder::Result TextTranscoder::operator()(
   const void* orig_src = src;
   while (src_bytes > 0) {
     size_t src_bytes_before = src_bytes;
-    size_t ret = iconv(
-        this->ic,
-        reinterpret_cast<char**>(const_cast<void**>(&src)),
-        &src_bytes,
+    size_t ret = this->convert(
         reinterpret_cast<char**>(&dest),
-        &dest_bytes);
+        &dest_bytes, &src, &src_bytes);
 
     size_t bytes_read = reinterpret_cast<const char*>(src) - reinterpret_cast<const char*>(orig_src);
     if (ret == this->FAILURE_RESULT) {
@@ -88,12 +104,7 @@ std::string TextTranscoder::operator()(const void* src, size_t src_bytes) {
     char* dest = block.data();
     size_t dest_size = block.size();
     size_t src_bytes_before = src_bytes;
-    size_t ret = iconv(
-        this->ic,
-        reinterpret_cast<char**>(const_cast<void**>(&src)),
-        &src_bytes,
-        reinterpret_cast<char**>(&dest),
-        &dest_size);
+    size_t ret = this->convert(&dest, &dest_size, &src, &src_bytes);
     block.resize(block.size() - dest_size);
 
     size_t bytes_read = reinterpret_cast<const char*>(src) - reinterpret_cast<const char*>(orig_src);
@@ -131,6 +142,20 @@ std::string TextTranscoder::on_untranslatable(const void**, size_t*) const {
 }
 
 TextTranscoderCustomSJISToUTF8::TextTranscoderCustomSJISToUTF8() : TextTranscoder("UTF-8", "SHIFT_JIS") {}
+
+size_t TextTranscoderCustomSJISToUTF8::bytes_before_custom(const void* vsrc, size_t size) const {
+  const auto* src = reinterpret_cast<const uint8_t*>(vsrc);
+  for (size_t offset = 0; offset < size;) {
+    uint8_t ch = src[offset];
+    if (ch == 0xF0 && offset + 1 < size && src[offset + 1] >= 0x40 && src[offset + 1] <= 0x64) {
+      return offset;
+    }
+    // Do not mistake a trail byte for the start of a custom character.
+    bool lead = (ch >= 0x81 && ch <= 0x9F) || (ch >= 0xE0 && ch <= 0xFC);
+    offset += lead && offset + 1 < size ? 2 : 1;
+  }
+  return size;
+}
 
 std::string encode_utf8_char(uint32_t ch) {
   std::string ret;
@@ -192,8 +217,8 @@ uint32_t decode_utf8_char(const void** vdata, size_t* size) {
 
 std::string TextTranscoderCustomSJISToUTF8::on_untranslatable(const void** vsrc, size_t* size) const {
   // Sega implemented some nonstandard Shift-JIS characters on PSO GC (and probably XB as well): the heart symbol,
-  // encoded as F040, and the PSO font, encoded as F041-F064. Understandably, libiconv doesn't know what to do with
-  // these because they're not actually part of Shift-JIS, so we have to handle them manually here. We convert them to
+  // encoded as F040, and the PSO font, encoded as F041-F064. Some iconv implementations map these to private-use
+  // Unicode, so we intercept them before conversion and handle them manually here. We convert them to
   // actual UTF-8 symbols:
   //   F040 (heart symbol) -> U+2665 (heart suit symbol)
   //   F041 (PSO font number 0) -> 24EA (circled digit zero)

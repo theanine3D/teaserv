@@ -1,5 +1,7 @@
 #include "Lobby.hh"
 
+#include "Episode3/CaelumLobbies.hh"
+
 #include <string.h>
 
 #include <phosg/Random.hh>
@@ -607,6 +609,10 @@ std::shared_ptr<Client> Lobby::find_client(const std::string* identifier, uint64
 Lobby::JoinError Lobby::join_error_for_client(std::shared_ptr<Client> c, const std::string* password) const {
   if (this->count_clients() >= this->max_clients) {
     return JoinError::FULL;
+  }
+  // A stock client would load a scene it does not have; debug access does not lift this.
+  if (this->check_flag(Flag::CAELUM_EXTRA) && !caelum::lobbies::visible_to(c->version(), c->caelum_mod_ready)) {
+    return JoinError::VERSION_CONFLICT;
   }
   bool debug_enabled = c->check_flag(Client::Flag::DEBUG_ENABLED);
   if (!this->version_is_allowed(c->version()) && !debug_enabled) {

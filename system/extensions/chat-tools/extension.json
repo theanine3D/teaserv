@@ -1,0 +1,25 @@
+{
+  "id": "chat-tools",
+  "version": "0.1.0",
+  "api_version": 1,
+  "storage_version": 1,
+  "entry": "main.lua",
+  "permissions": [
+    "commands",
+    "events",
+    "timers",
+    "storage",
+    "chat.reply",
+    "chat.broadcast",
+    "chat.whisper"
+  ],
+  "dependencies": [],
+  "settings": {
+    "shout_cooldown_ms": {
+      "type": "integer",
+      "default": 10000,
+      "min": 0,
+      "max": 3600000
+    }
+  }
+}

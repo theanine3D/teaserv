@@ -10,6 +10,7 @@
 #include "Client.hh"
 #include "ClientFunctionIndex.hh"
 #include "CommandFormats.hh"
+#include "Episode3/LobbyMedia.hh"
 #include "Lobby.hh"
 #include "Menu.hh"
 #include "Quest.hh"
@@ -400,7 +401,8 @@ void send_gallon_plan_result(
     uint32_t result_index);
 
 void send_ep3_card_list_update(std::shared_ptr<Client> c);
-void send_ep3_media_update(
+Episode3::LobbyMediaProfile ep3_media_profile_for_client(std::shared_ptr<Client> c);
+bool send_ep3_media_update(
     std::shared_ptr<Client> c, uint32_t type, uint32_t which, const std::string& compressed_data);
 void send_ep3_rank_update(std::shared_ptr<Client> c);
 void send_ep3_card_battle_table_state(std::shared_ptr<Lobby> l, uint16_t table_number);

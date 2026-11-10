@@ -84,4 +84,4 @@ VOLUME /newserv/system
 
 # does not allow receiving any signal at the moment, so force kill the app
 STOPSIGNAL SIGKILL
-CMD ["newserv"]
+CMD ["teaserv"]

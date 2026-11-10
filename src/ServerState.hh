@@ -38,9 +38,19 @@ class GameServer;
 class IPStackSimulator;
 class HTTPServer;
 
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+namespace teaserv::extensions {
+class Manager;
+}
+#endif
+
 class ServerState : public std::enable_shared_from_this<ServerState> {
 public:
   std::shared_ptr<DataIndex> data;
+
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  std::shared_ptr<teaserv::extensions::Manager> extensions;
+#endif
 
   std::shared_ptr<asio::io_context> io_context;
   std::shared_ptr<asio::thread_pool> thread_pool;

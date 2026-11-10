@@ -52,7 +52,9 @@ public:
   std::string operator()(std::string_view data);
 
 protected:
+  virtual size_t bytes_before_custom(const void* src, size_t size) const;
   virtual std::string on_untranslatable(const void** src, size_t* size) const;
+  size_t convert(char** dest, size_t* dest_bytes, const void** src, size_t* src_bytes);
 
   static const iconv_t INVALID_IC;
   static const size_t FAILURE_RESULT;
@@ -65,6 +67,7 @@ public:
   virtual ~TextTranscoderCustomSJISToUTF8() = default;
 
 protected:
+  size_t bytes_before_custom(const void* src, size_t size) const override;
   virtual std::string on_untranslatable(const void** src, size_t* size) const;
 };
 

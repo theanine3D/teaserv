@@ -1,0 +1,14 @@
+{
+  "Extensions": {
+    "Enabled": true,
+    "Packages": [
+      {
+        "id": "server-announcements",
+        "grants": ["commands", "events", "chat.reply", "chat.announce"],
+        "Settings": {
+          "game_opened_message": "A new game is available."
+        }
+      }
+    ]
+  }
+}

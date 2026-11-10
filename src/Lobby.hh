@@ -85,6 +85,7 @@ struct Lobby : public std::enable_shared_from_this<Lobby> {
     PUBLIC                          = 0x01000000,
     DEFAULT                         = 0x02000000,
     IS_OVERFLOW                     = 0x08000000,
+    CAELUM_EXTRA                    = 0x10000000, // lobby 21+ for Caelum clients (Episode3/CaelumLobbies.hh)
     // clang-format on
   };
 
