@@ -39,6 +39,7 @@ struct IPSSClient : std::enable_shared_from_this<IPSSClient> {
   VirtualNetworkProtocol protocol;
   uint32_t hdlc_escape_control_character_flags = 0xFFFFFFFF;
   uint32_t hdlc_remote_magic_number = 0;
+  uint32_t hdlc_max_receive_unit = 1500;
   parray<uint8_t, 6> mac_addr; // Only used for LinkType::ETHERNET
   uint32_t ipv4_addr;
   asio::steady_timer idle_timeout_timer;
@@ -53,6 +54,7 @@ struct IPSSClient : std::enable_shared_from_this<IPSSClient> {
     uint16_t client_port = 0;
     uint32_t next_client_seq = 0;
     uint32_t acked_server_seq = 0;
+    uint32_t next_server_seq = 0;
     size_t resend_push_usecs = DEFAULT_RESEND_PUSH_USECS;
     size_t next_push_max_frame_size = 1024;
     size_t max_frame_size = 1024;

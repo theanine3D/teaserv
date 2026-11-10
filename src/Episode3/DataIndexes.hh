@@ -994,7 +994,13 @@ struct Rules {
   // These fields specify override dice ranges for the 1-player team in 2v1.
   /* 0E */ uint8_t atk_dice_value_range_2v1 = 0; // High 4 bits = min, low 4 = max
   /* 0F */ uint8_t def_dice_value_range_2v1 = 0; // High 4 bits = min, low 4 = max
-  /* 10 */ parray<uint8_t, 4> unused;
+  // lone_player overrides team assignment, putting the specified player on a team by themself against all other
+  // players. The values are:
+  //   0 = no override (default)
+  //   1-4 = player in counter slot 0-3 (respectively) is on a team by themself
+  //   5-8 = player with client ID 0-3 (respectively) is on a team by themself
+  /* 10 */ uint8_t lone_player = 0;
+  /* 11 */ parray<uint8_t, 3> unused;
   /* 14 */
 
   Rules() = default;
@@ -1205,6 +1211,10 @@ struct MapDefinition { // .mnmd format; also the format of (decompressed) quests
   // - If the team has 1 player, only byte [0] is used.
   // - If the team has 2 players, bytes [1] and [2] are used.
   // - If the team has 3 players, bytes [3] through [5] are used.
+  // Note that the game's preview window ignores this, so if the standard values (described above, on map_tiles) are
+  // not used, then the preview window when selecting a map will not match where players are actually placed when the
+  // battle starts. On Trial Edition, the preview window places players on tiles matching 03 and 04 for team A, and 07
+  // and 08 for team B; on all other Episode 3 builds, team B is assumed to be 06 and 07 instead.
   /* 010C */ parray<parray<uint8_t, 6>, 2> start_tile_definitions;
 
   struct CameraSpec {
@@ -1409,6 +1419,12 @@ struct MapDefinition { // .mnmd format; also the format of (decompressed) quests
   inline bool is_quest() const {
     return (this->map_category <= 2);
   }
+
+  static void rewrite_map_tiles_for_preview(
+      parray<parray<uint8_t, 0x10>, 0x10>& dest_map_tiles,
+      const parray<parray<uint8_t, 0x10>, 0x10>& src_map_tiles,
+      const parray<parray<uint8_t, 6>, 2>& start_tile_definitions,
+      bool is_nte);
 
   // This function throws runtime_error if the passed-in map is not semantically equivalent to *this. Semantic
   // equivalence means all fields that affect gameplay and visuals are equivalent, but dialogue, names, and description

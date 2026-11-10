@@ -533,7 +533,7 @@ static void on_sync_joining_player_compressed_state(std::shared_ptr<Client> c, S
   size_t compressed_size;
   const void* compressed_data;
   if (is_pre_v1(c->version())) {
-    const auto& cmd = msg.check_size_t<G_SyncGameStateHeader_DCNTE_6x6B_6x6C_6x6D_6x6E>(0xFFFF);
+    const auto& cmd = msg.check_size_t<G_SyncGameStateHeader_DCProtos_6x6B_6x6C_6x6D_6x6E>(0xFFFF);
     orig_subcommand_number = cmd.header.basic_header.subcommand;
     decompressed_size = cmd.decompressed_size;
     compressed_size = msg.size - sizeof(cmd);
@@ -1209,7 +1209,7 @@ uint32_t Parsed6x70Data::convert_player_flags(uint32_t player_flags, bool to_v3)
   //   00008000 00001000 = cannot use telepipe / Ryuker (e.g. boss warps set this flag when the player is nearby)
   //   00010000 00002000 = unknown (TODO: appears to be entirely unused, at least in v3)
   //   00020000 00004000 = is teleporting as a result of 6x24 (set only briefly after appearing at destination)
-  //   00040000 00008000 = is dead NPC (set by e.g. npc_crptalk_id when regsA[4] == 1)
+  //   00040000 00008000 = is dead NPC (set by e.g. npc_crptalk_id when initial_state == 1)
   //   00080000 -------- = unknown (TODO: appears to be entirely unused, at least in v2)
   //   00100000 00010000 = has trap vision (set permanently for androids, or temporarily after a Trap Vision is used)
   //   00200000 00020000 = equipped items are invisible / intangible (e.g. in Pioneer 2)
@@ -1380,7 +1380,7 @@ static void on_ep3_battle_subs(std::shared_ptr<Client> c, SubcommandMessage& msg
 
   auto s = c->require_server_state();
   auto l = c->require_lobby();
-  if (!l->is_game() || !l->is_ep3()) {
+  if (!l->is_game() || !l->is_ep3() || !l->ep3_server) {
     return;
   }
 
@@ -1399,16 +1399,30 @@ static void on_ep3_battle_subs(std::shared_ptr<Client> c, SubcommandMessage& msg
       return;
     }
   } else if (header.subsubcommand == 0x2F) {
+    const Ep3CounterPlayerEntryTrial* entry;
+    uint8_t menu_item_index;
     if (c->version() == Version::GC_EP3_NTE) {
       const auto& cmd = msg.check_size_t<G_SetDeckInBattleSetupMenu_Ep3NTE_6xB5x2F>();
       if (cmd.menu_type >= 0x15) {
         return;
       }
+      entry = &cmd.entry;
+      menu_item_index = cmd.menu_item_index;
     } else {
       const auto& cmd = msg.check_size_t<G_SetDeckInBattleSetupMenu_Ep3_6xB5x2F>();
       if (cmd.menu_type >= 0x15) {
         return;
       }
+      entry = &cmd.entry;
+      menu_item_index = cmd.menu_item_index;
+    }
+    uint8_t slot_index = menu_item_index - (menu_item_index > 2);
+    if (entry->entry_state == 0) {
+      l->ep3_server->clear_counter_slot(slot_index);
+    } else if (entry->entry_type == 2) {
+      l->ep3_server->set_counter_slot_com(slot_index);
+    } else {
+      l->ep3_server->set_counter_slot_human(slot_index, entry->owner_client_id);
     }
   } else if (header.subsubcommand == 0x31) {
     const auto& cmd = msg.check_size_t<G_ConfirmDeckSelection_Ep3_6xB5x31>();
@@ -5895,9 +5909,15 @@ asio::awaitable<void> on_subcommand_multi(std::shared_ptr<Client> c, Channel::Me
     if (cmd_size == 0) {
       throw std::runtime_error("invalid subcommand size");
     }
+    if (cmd_size > msg.data.size() - offset) {
+      throw std::runtime_error("subcommand extends beyond end of command");
+    }
     void* cmd_data = msg.data.data() + offset;
 
     const auto* def = def_for_subcommand(c->version(), header->subcommand);
+    if (!def) {
+      throw std::runtime_error("invalid subcommand");
+    }
     SubcommandMessage sub_msg{.command = msg.command, .flag = msg.flag, .data = cmd_data, .size = cmd_size};
     if (std::holds_alternative<SubcommandHandlerFn>(def->handler)) {
       std::get<SubcommandHandlerFn>(def->handler)(c, sub_msg);

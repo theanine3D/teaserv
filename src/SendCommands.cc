@@ -2428,12 +2428,7 @@ void send_update_lobby_data_bb(std::shared_ptr<Client> c) {
 
 void send_player_leave_notification(std::shared_ptr<Lobby> l, uint8_t leaving_client_id) {
   S_LeaveLobby_66_69_Ep3_E9 cmd = {leaving_client_id, l->leader_id, l->client_extension_flags(), 0};
-  uint8_t cmd_num;
-  if (l->is_game()) {
-    cmd_num = l->check_flag(Lobby::Flag::IS_SPECTATOR_TEAM) ? 0xE9 : 0x66;
-  } else {
-    cmd_num = 0x69;
-  }
+  uint8_t cmd_num = l->is_game() ? (l->check_flag(Lobby::Flag::IS_SPECTATOR_TEAM) ? 0xE9 : 0x66) : 0x69;
   send_command_t(l, cmd_num, leaving_client_id, cmd);
   for (const auto& watcher_l : l->watcher_lobbies) {
     send_command_t(watcher_l, cmd_num, leaving_client_id, cmd);
@@ -2732,11 +2727,11 @@ void send_game_join_sync_command_compressed(
     uint8_t sc) {
   phosg::StringWriter w;
   if (is_pre_v1(c->version())) {
-    G_SyncGameStateHeader_DCNTE_6x6B_6x6C_6x6D_6x6E compressed_header;
+    G_SyncGameStateHeader_DCProtos_6x6B_6x6C_6x6D_6x6E compressed_header;
     compressed_header.header.basic_header.subcommand = (c->version() == Version::DC_NTE) ? dc_nte_sc : dc_11_2000_sc;
     compressed_header.header.basic_header.size = 0x00;
     compressed_header.header.basic_header.unused = 0x0000;
-    compressed_header.header.size = (size + sizeof(G_SyncGameStateHeader_DCNTE_6x6B_6x6C_6x6D_6x6E) + 3) & (~3);
+    compressed_header.header.size = (size + sizeof(G_SyncGameStateHeader_DCProtos_6x6B_6x6C_6x6D_6x6E) + 3) & (~3);
     compressed_header.decompressed_size = decompressed_size;
     w.put(compressed_header);
   } else {

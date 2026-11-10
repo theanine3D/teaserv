@@ -2235,6 +2235,7 @@ Action a_convert_rare_item_set(
     +[](phosg::Arguments& args) {
       double rate_factor = args.get<double>("multiply", 1.0);
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_text_index();
@@ -2301,6 +2302,7 @@ Action a_compare_rare_item_set(
       }
 
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_text_index();
@@ -2648,6 +2650,7 @@ Action a_describe_item(
       auto version = get_cli_version(args);
 
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_text_index();
@@ -2719,6 +2722,7 @@ Action a_describe_item(
 Action a_name_all_items(
     "name-all-items", nullptr, +[](phosg::Arguments& args) {
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_text_index();
@@ -2804,6 +2808,7 @@ Action a_print_level_stats(
     Print the level tables for each version in a semi-human-readable format.\n",
     +[](phosg::Arguments& args) {
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_level_tables();
@@ -2891,7 +2896,12 @@ Action a_show_item_parameter_tables(
     format.\n",
     +[](phosg::Arguments& args) {
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
-      di->load_all();
+      di->load_config_before();
+      di->load_config_early();
+      di->load_patch_indexes();
+      di->load_text_index();
+      di->load_item_definitions();
+      di->load_item_name_indexes();
       for (Version v : ALL_VERSIONS) {
         const auto& index = di->item_name_index_opt(v);
         if (index) {
@@ -2906,6 +2916,7 @@ Action a_generate_item_parameter_tables_html(
     Generate an HTML file for each item parameter table.\n",
     +[](phosg::Arguments& args) {
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_text_index();
@@ -2928,7 +2939,11 @@ Action a_show_shop_random_sets(
     format.\n",
     +[](phosg::Arguments& args) {
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
-      di->load_all();
+      di->load_config_before();
+      di->load_config_early();
+      di->load_item_definitions();
+      di->load_item_name_indexes();
+      di->load_drop_tables();
       di->tekker_adjustment_set->print(stdout);
       di->armor_random_set->print(stdout);
       di->tool_random_set->print(stdout);
@@ -3525,6 +3540,7 @@ Action a_check_supermaps(
       bool generate_enemy_stats = args.get<bool>("generate-enemy-stats");
 
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_set_data_tables();
@@ -3705,6 +3721,8 @@ Action a_materialize_map(
       auto materialized = map_file->materialize_random_sections(seed);
       if (args.get<bool>("disassemble")) {
         write_output_data(args, materialized->disassemble(false, get_cli_version(args)), "txt");
+      } else if (args.get<bool>("decompressed")) {
+        write_output_data(args, materialized->serialize(), "datd");
       } else {
         write_output_data(args, prs_compress_optimal(materialized->serialize()), "dat");
       }
@@ -3921,6 +3939,7 @@ Action a_print_free_supermap(
       }
 
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_set_data_tables();
@@ -3951,6 +3970,7 @@ Action a_check_quests(
 
       auto di = std::make_shared<DataIndex>(get_config_filename(args));
       di->is_debug = true;
+      di->load_config_before();
       di->load_config_early();
       di->load_patch_indexes();
       di->load_set_data_tables();
@@ -4520,7 +4540,7 @@ Action a_run_server_replay_log(
       if (args.get<bool>("debug")) {
         data_index->is_debug = true;
       }
-      data_index->load_all();
+      data_index->load_all(args.get<bool>("disable-fast-load") ? 1 : 0);
       auto state = ServerState::create_shared(data_index, !replay_log_filenames.empty());
 
       std::shared_ptr<ServerShell> shell;
@@ -4663,7 +4683,7 @@ Action a_run_server_replay_log(
         }
 
         if (!state->data->http_addresses.empty()) {
-          config_log.info_f("Starting HTTP server");
+          config_log.info_f("Starting API HTTP server");
           state->http_server = std::make_shared<HTTPServer>(state);
           for (const auto& it : state->data->http_addresses) {
             auto netloc = phosg::parse_netloc(it);
