@@ -160,6 +160,11 @@
   // present, overrides that behavior.
   // "RunInteractiveShell": false,
 
+  // Teaserv: how often (in seconds) the server adds a line of activity statistics to system/stats, for the
+  // Statistics window of the admin program (docs/TEASERV_ADMIN_GUI.md). The default is 60; 0 turns recording off.
+  // Read once at startup.
+  // "TeaservStatsInterval": 60,
+
   // Specify which kinds of logging you want to be enabled. This allows you to make the terminal more or less noisy
   // when players are connected, so you can see only the log messages you care about. The log levels are, in decreasing
   // order of verbosity, "DEBUG", "INFO", "WARNING", "ERROR", and "DISABLED".

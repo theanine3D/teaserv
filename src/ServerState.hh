@@ -18,6 +18,7 @@
 #include "DataIndex.hh"
 #include "Episode3/DataIndexes.hh"
 #include "Episode3/Tournament.hh"
+#include "Episode3/ServerPack.hh"
 #include "GSLArchive.hh"
 #include "HTTPServer.hh"
 #include "IPV4RangeSet.hh"
@@ -60,6 +61,13 @@ public:
   bool is_replay = false;
   bool use_psov2_rand_crypt = false; // Used in some tests
   bool use_legacy_item_random_behavior = false; // Used in some tests
+  // Caelum: a pack of the server mod list adds cards, so Caelum and stock clients play apart
+  // (Episode3/CaelumCardMods.hh). Set at startup and whenever a Caelum client is sent the list.
+  std::atomic<bool> caelum_card_mods_active = false;
+  // Caelum server modpacks (Episode3/ServerPack.hh): this server's identity and the pack keys it may hand out.
+  // Loaded at startup and with the mod list (update_caelum_card_mods).
+  std::shared_ptr<const caelum::serverpack::Identity> caelum_identity;
+  std::shared_ptr<const std::map<caelum::serverpack::PackId, caelum::serverpack::Key>> caelum_pack_keys;
 
   std::shared_ptr<Episode3::TournamentIndex> ep3_tournament_index;
 
@@ -98,6 +106,10 @@ public:
   std::shared_ptr<Lobby> create_lobby(bool is_game);
   void remove_lobby(std::shared_ptr<Lobby> l);
   void on_player_left_lobby(std::shared_ptr<Lobby> l, uint8_t leaving_client_id);
+  // Caelum server mod list (CAELUM_MODPACK_MANIFEST or system/caelum-modpacks.txt; "CMOD1\n" when absent), checked
+  // with caelum::mods::parse_manifest. update_caelum_card_mods sets caelum_card_mods_active from its packs.
+  std::string load_caelum_modpack_manifest() const;
+  void update_caelum_card_mods(const std::string& manifest, bool log_all);
 
   std::shared_ptr<Client> find_client(
       const std::string* identifier = nullptr, uint64_t account_id = 0, std::shared_ptr<Lobby> l = nullptr);

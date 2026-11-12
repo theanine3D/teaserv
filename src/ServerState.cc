@@ -1,5 +1,10 @@
 #include "ServerState.hh"
 
+#include <fstream>
+#include <sstream>
+
+#include "Episode3/CaelumCardMods.hh"
+
 #include "Episode3/CaelumLobbies.hh"
 
 #include <string.h>
@@ -19,6 +24,7 @@
 #include "Loggers.hh"
 #include "NetworkAddresses.hh"
 #include "SendCommands.hh"
+#include "TeaservStats.hh"
 #include "Text.hh"
 #include "TextIndex.hh"
 
@@ -242,6 +248,9 @@ std::shared_ptr<Lobby> ServerState::create_lobby(bool is_game) {
   auto l = std::make_shared<Lobby>(this->shared_from_this(), this->next_lobby_id++, is_game);
   this->id_to_lobby.emplace(l->lobby_id, l);
   l->idle_timeout_usecs = this->data->persistent_game_idle_timeout_usecs;
+  if (is_game) {
+    teaserv_stats::note_game_created();
+  }
 
   send_http_event_notif(this, HTTPEventType::CREATE_LOBBY, [&]() {
     return std::make_shared<phosg::JSON>(phosg::JSON::dict({{"ID", l->lobby_id}, {"IsGame", is_game}}));
@@ -415,6 +424,131 @@ void ServerState::create_default_lobbies() {
       config_log.error_f("Caelum extra lobbies not created: {}", e.what());
     }
   }
+
+  // Caelum card mods: decide at startup whether Caelum and stock clients play apart
+  try {
+    this->update_caelum_card_mods(this->load_caelum_modpack_manifest(), true);
+  } catch (const std::exception& e) {
+    this->caelum_card_mods_active = true;
+    config_log.error_f("Caelum mod list unreadable ({}); Caelum and stock clients play apart", e.what());
+  }
+}
+
+std::string ServerState::load_caelum_modpack_manifest() const {
+  const char* env = std::getenv("CAELUM_MODPACK_MANIFEST");
+  const std::string filename = env ? env : "system/caelum-modpacks.txt";
+  std::string manifest = "CMOD1\n";
+  if (std::filesystem::is_regular_file(filename)) {
+    std::ifstream in(filename, std::ios::binary);
+    char bytes[30001];
+    in.read(bytes, sizeof(bytes));
+    if (in.gcount() > 30000) {
+      throw std::runtime_error("Caelum mod manifest exceeds 30 KB");
+    }
+    if (in.bad()) {
+      throw std::runtime_error("Cannot read Caelum mod manifest");
+    }
+    manifest.assign(bytes, static_cast<size_t>(in.gcount()));
+  }
+  caelum::mods::parse_manifest(manifest); // reject malformed server config before use
+  return manifest;
+}
+
+// Server modpacks: the identity seed file (made on first use) and "<pack id> <pack key> [name]" lines.
+static std::shared_ptr<const caelum::serverpack::Identity> load_caelum_identity(bool log) {
+  namespace sp = caelum::serverpack;
+  const char* env = std::getenv("CAELUM_SERVER_IDENTITY");
+  const std::string filename = env ? env : "system/caelum-server-identity.key";
+  if (!std::filesystem::is_regular_file(filename)) {
+    sp::Key seed = sp::random_array<sp::Key>();
+    std::ofstream out(filename, std::ios::binary);
+    out << sp::hex(seed) << "\n";
+    if (!out) {
+      throw std::runtime_error("cannot write " + filename);
+    }
+    config_log.info_f("Created Caelum server identity {} (back it up; keep it secret)", filename);
+  }
+  std::string text = phosg::load_file(filename);
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) {
+    text.pop_back();
+  }
+  auto identity = std::make_shared<sp::Identity>(sp::Identity::from_seed(sp::unhex<sp::Key>(text, "server identity file")));
+  if (log) {
+    config_log.info_f("Caelum server identity public key (for server modpacks): {}", sp::hex(identity->public_key));
+  }
+  return identity;
+}
+static std::shared_ptr<const std::map<caelum::serverpack::PackId, caelum::serverpack::Key>> load_caelum_pack_keys(bool log) {
+  namespace sp = caelum::serverpack;
+  const char* env = std::getenv("CAELUM_SERVER_KEYS");
+  const std::string filename = env ? env : "system/caelum-server-keys.txt";
+  auto keys = std::make_shared<std::map<sp::PackId, sp::Key>>();
+  if (std::filesystem::is_regular_file(filename)) {
+    std::istringstream lines(phosg::load_file(filename));
+    std::string line;
+    size_t number = 0;
+    while (std::getline(lines, line)) {
+      number++;
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      const size_t start = line.find_first_not_of(" \t");
+      if (start == std::string::npos || line[start] == '#') {
+        continue;
+      }
+      std::istringstream fields(line.substr(start));
+      std::string id, key;
+      fields >> id >> key;
+      try {
+        keys->insert_or_assign(sp::unhex<sp::PackId>(id, "pack id"), sp::unhex<sp::Key>(key, "pack key"));
+      } catch (const std::exception& e) {
+        config_log.error_f("{} line {}: {}", filename, number, e.what());
+      }
+    }
+  }
+  if (log) {
+    config_log.info_f("Caelum server modpack keys: {}", keys->size());
+  }
+  return keys;
+}
+
+void ServerState::update_caelum_card_mods(const std::string& manifest, bool log_all) {
+  const auto packs = caelum::mods::parse_manifest(manifest);
+  if (!this->caelum_identity) {
+    this->caelum_identity = load_caelum_identity(true);
+  }
+  this->caelum_pack_keys = load_caelum_pack_keys(log_all);
+  std::set<uint32_t> stock_ids;
+  if (this->data && this->data->ep3_card_index) {
+    stock_ids = this->data->ep3_card_index->all_ids();
+  }
+  bool active = false;
+  for (const auto& check : caelum::cardmods::check_manifest(
+           packs, caelum::cardmods::pack_dir(), stock_ids, *this->caelum_pack_keys)) {
+    active |= check.blocks_cross_play();
+    using R = caelum::cardmods::PackCheck::Result;
+    if (check.result == R::NEW_CARDS) {
+      std::string ids;
+      for (uint32_t id : check.new_card_ids) {
+        ids += std::format("{}{}", ids.empty() ? "" : " ", id);
+      }
+      if (log_all) {
+        config_log.info_f("Caelum modpack {} ({}) adds cards: {}", check.name, check.sha256.substr(0, 12), ids);
+      }
+    } else if (check.result == R::NO_NEW_CARDS) {
+      if (log_all) {
+        config_log.info_f("Caelum modpack {} ({}) adds no cards", check.name, check.sha256.substr(0, 12));
+      }
+    } else {
+      config_log.warning_f("Caelum modpack {} ({}) not checked ({}); counted as adding cards{}",
+          check.name, check.sha256.substr(0, 12), check.detail,
+          check.result == R::NOT_FOUND ? ". Put its ZIP in " + caelum::cardmods::pack_dir().string() : std::string());
+    }
+  }
+  if (log_all || active != this->caelum_card_mods_active) {
+    config_log.info_f("{}", active ? "Caelum card mods active: Caelum and stock clients play apart" : "No Caelum card mods: Caelum and stock clients may play together");
+  }
+  this->caelum_card_mods_active = active;
 }
 
 void ServerState::update_default_lobby_events_from_config() {

@@ -81,6 +81,7 @@ struct Lobby : public std::enable_shared_from_this<Lobby> {
     START_BATTLE_PLAYER_IMMEDIATELY = 0x00010000,
     CANNOT_CHANGE_CHEAT_MODE        = 0x00020000,
     USE_CREATOR_SECTION_ID          = 0x00040000,
+    CAELUM_MODDED                   = 0x00080000, // made by a Caelum client (Episode3/CaelumCardMods.hh)
     // Flags used only for lobbies
     PUBLIC                          = 0x01000000,
     DEFAULT                         = 0x02000000,
@@ -252,6 +253,7 @@ struct Lobby : public std::enable_shared_from_this<Lobby> {
     LEVEL_TOO_LOW,
     LEVEL_TOO_HIGH,
     NO_ACCESS_TO_QUEST,
+    CAELUM_CARD_MODS,
   };
   JoinError join_error_for_client(std::shared_ptr<Client> c, const std::string* password) const;
 

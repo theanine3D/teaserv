@@ -16,6 +16,7 @@
 #include "Loggers.hh"
 #include "SendCommands.hh"
 #include "Server.hh"
+#include "TeaservStats.hh"
 #include "Version.hh"
 
 const uint64_t CLIENT_CONFIG_MAGIC = 0x8399AC32;
@@ -455,6 +456,7 @@ void Client::set_login(std::shared_ptr<Login> login) {
     this->log.info_f("Login: {}", this->login->str());
   }
 
+  teaserv_stats::note_login();
   send_http_event_notif(s, HTTPEventType::PLAYER_LOGIN, [&]() {
     return std::make_shared<phosg::JSON>(phosg::JSON::dict(
         {{"AccountID", this->login->account->account_id}, {"ClientID", this->id}}));

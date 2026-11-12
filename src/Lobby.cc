@@ -1,5 +1,6 @@
 #include "Lobby.hh"
 
+#include "Episode3/CaelumCardMods.hh"
 #include "Episode3/CaelumLobbies.hh"
 
 #include <string.h>
@@ -619,6 +620,12 @@ Lobby::JoinError Lobby::join_error_for_client(std::shared_ptr<Client> c, const s
     return JoinError::VERSION_CONFLICT;
   }
   if (this->is_game()) {
+    // A stock game cannot hold cards that a server card mod added; debug access does not lift this
+    auto s = this->server_state.lock();
+    if (s && caelum::cardmods::separated(
+                 s->caelum_card_mods_active, this->check_flag(Flag::CAELUM_MODDED), c->caelum_mod_ready)) {
+      return JoinError::CAELUM_CARD_MODS;
+    }
     if (this->check_flag(Flag::QUEST_SELECTION_IN_PROGRESS)) {
       return JoinError::QUEST_SELECTION_IN_PROGRESS;
     }
@@ -872,6 +879,8 @@ const char* phosg::name_for_enum<Lobby::JoinError>(Lobby::JoinError value) {
       return "LEVEL_TOO_HIGH";
     case Lobby::JoinError::NO_ACCESS_TO_QUEST:
       return "NO_ACCESS_TO_QUEST";
+    case Lobby::JoinError::CAELUM_CARD_MODS:
+      return "CAELUM_CARD_MODS";
     default:
       throw std::runtime_error("invalid drop mode");
   }

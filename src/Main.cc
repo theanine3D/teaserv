@@ -52,6 +52,8 @@
 #include "SignalWatcher.hh"
 #include "StaticGameData.hh"
 #include "StaticTests.hh"
+#include "TeaservStats.hh"
+#include "Episode3/CaelumCardMods.hh"
 #include "Text.hh"
 #include "TextIndex.hh"
 
@@ -250,6 +252,31 @@ Action a_run_static_tests(
     "run-static-tests", nullptr,
     +[](phosg::Arguments&) {
       run_static_tests();
+    });
+
+Action a_check_caelum_modpacks(
+    "check-caelum-modpacks", "\
+  check-caelum-modpacks ZIP-FILE...\n\
+    Say whether each Caelum modpack adds cards that system/ep3/card-definitions.mnr\n\
+    lacks (if any listed pack does, Caelum and stock clients play apart).\n",
+    +[](phosg::Arguments& args) {
+      Episode3::CardIndex index("system/ep3/card-definitions.mnr", "");
+      const auto stock = index.all_ids();
+      for (size_t z = 1;; z++) {
+        const auto filename = args.get<std::string>(z, false);
+        if (filename.empty()) {
+          break;
+        }
+        const auto check = caelum::cardmods::check_pack_bytes(phosg::load_file(filename), stock);
+        std::string ids;
+        for (uint32_t id : check.new_card_ids) {
+          ids += std::format(" {}", id);
+        }
+        using R = caelum::cardmods::PackCheck::Result;
+        phosg::fwrite_fmt(stdout, "{}: {}{}{}\n", filename,
+            check.result == R::NEW_CARDS ? "adds cards:" : check.result == R::NO_NEW_CARDS ? "adds no cards" : "unreadable: ",
+            ids, check.detail);
+      }
     });
 
 static void a_compress_decompress_fn(phosg::Arguments& args) {
@@ -4712,8 +4739,14 @@ Action a_run_server_replay_log(
       } else {
         should_run_shell = false;
       }
+      if (args.get<bool>("force-shell")) {
+        should_run_shell = true; // Teaserv admin GUI: the shell reads commands from a pipe
+      }
       if (should_run_shell) {
         should_run_shell = replay_log_filenames.empty();
+      }
+      if (replay_log_filenames.empty()) {
+        teaserv_stats::start(state);
       }
 
       config_log.info_f("Ready");
@@ -4722,6 +4755,10 @@ Action a_run_server_replay_log(
       }
 
       state->io_context->run();
+      teaserv_stats::stop();
+      if (replay_log_filenames.empty()) {
+        teaserv_admin::save_connected_players(state);
+      }
       config_log.info_f("Normal shutdown");
 
       if (!replay_sessions.empty()) {

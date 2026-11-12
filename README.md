@@ -1,12 +1,14 @@
 # Teaserv (fork of Newserv)
 
-Teaserv is a fork of Newserv created to enable online mod support for decomp/recomp-based ports of PSO's various versions. Teaserv adds an opt-in Lua server extension system. See [extension setup and API](docs/EXTENSIONS.md), [native lobby scenes](docs/EXTENSIONS-SCENES.md), and the [upstream integration map](docs/EXTENSIONS-INTEGRATION.md). Lua extensions are disabled by default. Chat features use original client protocols; native decorations are limited by each client's documented capabilities. Teaserv should be considered highly experimental; if you want a stock, vanilla experience, newserv is strongly recommended instead.
+Teaserv is a fork of Newserv created to enable online mod support for decomp/recomp-based ports of PSO's various versions, like Caelum (the Episode 3 PC port). Teaserv adds an opt-in Lua server extension system. See [extension setup and API](docs/EXTENSIONS.md), [native lobby scenes](docs/EXTENSIONS-SCENES.md), and the [upstream integration map](docs/EXTENSIONS-INTEGRATION.md). Lua extensions are disabled by default. Chat features use original client protocols; native decorations are limited by each client's documented capabilities. Teaserv should be considered highly experimental; if you want a stock, vanilla experience, newserv is strongly recommended instead.
 
 This fork builds `teaserv.exe` on Windows and `teaserv` on other platforms, in both extension build modes. Use that executable name in place of `newserv` in the upstream instructions below. The internal CMake target remains `newserv`.
 
 Note: AI assistance has been used in this project.
 
 ---
+
+# newserv <img align="right" src="static/s-newserv.png" />
 
 newserv is a game server, proxy, and reverse-engineering tool for Phantasy Star Online (PSO). **To quickly get started using newserv, just read the [server setup](#server-setup) and [how to connect](#how-to-connect) sections.**
 

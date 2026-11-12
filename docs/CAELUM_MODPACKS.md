@@ -93,10 +93,80 @@ CMOD1
 Replace `<TAB>` with actual tabs. Get a ZIP's hash with PowerShell
 `(Get-FileHash -Algorithm SHA256 -LiteralPath 'pack.zip').Hash.ToLowerInvariant()`.
 HTTP and HTTPS are supported; TLS certificates are validated, and HTTPS cannot
-redirect down to HTTP. A list is limited to 32 unique packs and 30,000 wire bytes.
+redirect down to HTTP. Share links of Google Drive (`drive.google.com/file/d/<id>/view`,
+`open?id=`, `uc?id=`, `docs.google.com/uc?id=`, `drive.usercontent.google.com/download?id=`),
+Dropbox (`www.dropbox.com/scl/fi/...`, `/s/...`), OneDrive (`1drv.ms/...`,
+`onedrive.live.com/...`) and SharePoint (`<tenant>.sharepoint.com/:u:/...`) may be
+used as they are, for files shared as "Anyone with the link": Teaserv sends the
+link unchanged and the client derives the direct download (`direct_download_url`
+in `src/Episode3/Modpacks.hh`; Drive direct endpoint, Dropbox `dl=1`, OneDrive
+shares API, SharePoint `download=1`). Folder and Docs links are refused when the
+manifest is parsed. Drive and Dropbox limit downloads of popular files, and
+Microsoft refuses anonymous API downloads of some personal OneDrive links since
+2025, so busy servers should host packs on their own web server.
+A list is limited to 32 unique packs and 30,000 wire bytes.
 The client also bounds downloads to 1 GiB and verifies the full server list
 before publishing any session overrides. Interrupted downloads do not install
 partial ZIPs. Server installs never create `.enabled` sidecars.
+
+### Card mods and stock clients
+
+A pack that adds new cards gives Caelum clients cards that a stock Episode III
+client does not have: seeing such a card in a battle, or receiving it in a trade,
+could crash a stock game or damage its save. While any pack of the mod list adds
+cards, Teaserv keeps the two kinds of client apart. Caelum clients are those that
+finished the modpack handshake (E3/02 + F2); every other Episode III client is a
+stock client. Lobbies stay shared. Separated:
+
+* games: each game remembers whether a Caelum client made it (lobby flag
+  `CAELUM_MODDED`); the other kind cannot join it ("Card mods are active..."),
+  and it shows as not joinable in the game list;
+* battle tables: a table with both kinds does not start a match;
+* spectator teams: a spectator team cannot watch a game of the other kind;
+* tournaments: a player cannot register while a connected player of the other
+  kind is registered (matches are played at battle tables as well);
+* card trades are refused across kinds (they happen inside games, so this only
+  covers games from before the list changed).
+
+Packs that do not add cards (card art, models, text, scenes, changed stats of
+existing cards) leave cross-play open.
+
+How Teaserv decides: it reads each listed pack from `system/caelum-modpacks/`
+(or the folder named by `CAELUM_MODPACK_DIR`), finding it by SHA-256 among the
+`*.zip` files there. A pack adds cards when its card table
+(`PsoCardDataTbl_Base.prs`, in any folder of the ZIP) holds a card ID that
+`system/ep3/card-definitions.mnr` lacks; the table's end record is ignored. **A
+listed pack without a local copy, or one that cannot be read, counts as adding
+cards**, so copy every pack ZIP into that folder. The check runs at startup and
+again whenever a Caelum client is sent the list; the server log names each pack's
+result. `teaserv check-caelum-modpacks <zip>...` (run where `system/ep3` is)
+prints the same check for any ZIPs. Code: `src/Episode3/CaelumCardMods.cc`.
+
+### Server modpacks
+
+A server modpack is encrypted and works only on the servers it names (design and
+wire format: Caelum project `pso_ep3_server_modpacks.md`). It is listed in
+`caelum-modpacks.txt` like any pack; Caelum recognises it from the ZIP.
+
+* **Identity.** Teaserv makes `system/caelum-server-identity.key` on first start
+  (or uses `CAELUM_SERVER_IDENTITY`) and logs its public key. Give that public key
+  to modpack creators; they seal packs for it. **Back the file up and keep it
+  secret.** Losing it makes every pack sealed for it unusable; another server with
+  a copy of it can unlock those packs. Moving the server means moving this file.
+* **Keys.** `system/caelum-server-keys.txt` (or `CAELUM_SERVER_KEYS`): one
+  `<pack id> <pack key> [name]` line per pack, as `caelum_pack_tool seal` prints
+  it; `#` starts a comment. Read at startup and again for every Caelum login.
+  Never published, never logged.
+* **Handshake.** While a Caelum client is in the mod handshake, it may send one
+  `F2` flag `4` (`CSK4`, one-time X25519 key + pack ids). Teaserv answers `F2` flag
+  `5` with the keys it holds for those packs, wrapped to the client's key and
+  signed with the identity. Anything else (a second request, a malformed one)
+  disconnects. Stock clients never see these commands.
+* **Card check.** The card-mod cross-play check opens a server modpack's local
+  copy (in `system/caelum-modpacks/`) with its key; without a key it counts as
+  adding cards.
+* The identity file, the keys file and `system/caelum-modpacks/` are in
+  `.gitignore`.
 
 Wire extension, native authenticated Episode III sessions only:
 

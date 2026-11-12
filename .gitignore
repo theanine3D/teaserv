@@ -21,7 +21,18 @@ Testing
 
 # Files modified by the user and/or server that don't have defaults
 system/config.json
+# Caelum server modpacks: secrets and pack copies (docs/CAELUM_MODPACKS.md)
+system/caelum-server-identity.key
+system/caelum-server-keys.txt
+system/caelum-modpacks/
 system/extensions-state/
+# Teaserv Admin (docs/TEASERV_ADMIN_GUI.md): recorded statistics, saved logs, settings backups, build output
+system/stats/
+/logs/
+/config-backups/
+tools/admin-gui/build/
+tools/admin-gui/dist/
+__pycache__/
 system/ep3/battle-records/*.mzr
 system/ep3/battle-records/*.mzrd
 system/ep3/tournament-state.json

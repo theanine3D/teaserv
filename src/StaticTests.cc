@@ -6,6 +6,8 @@
 #include "Episode3/LobbyMediaCapabilities.hh"
 #include "Episode3/Modpacks.hh"
 #include "Episode3/CaelumLobbies.hh"
+#include "Episode3/CaelumCardMods.hh"
+#include "Compression.hh"
 #include "CommandFormats.hh"
 #include "PSOProtocol.hh"
 #include "Text.hh"
@@ -98,6 +100,200 @@ void run_static_tests() {
   expect_raises(std::runtime_error,[&]{caelum::mods::parse_manifest("CMOD1\n"+mod_hash+"\tx\tfile:///x\n");});
   expect_raises(std::runtime_error,[&]{caelum::mods::parse_manifest("CMOD1\ninvalid\tx\thttps://x\n");});
   expect_raises(std::runtime_error,[&]{caelum::mods::parse_manifest("CMOD1\n"+mod_hash+"\tx\thttps://x\n"+mod_hash+"\ty\thttps://y\n");});
+  { // Google Drive share links map to the direct download endpoint (Modpacks.hh direct_download_url)
+    using caelum::mods::direct_download_url;
+    const std::string direct="https://drive.usercontent.google.com/download?id=1AbC-d_9&export=download&confirm=t";
+    const std::string plain="https://example.test/mod.zip";
+    expect_eq(direct_download_url(plain),plain);
+    expect_eq(direct_download_url("https://drive.google.com/file/d/1AbC-d_9/view?usp=sharing"),direct);
+    expect_eq(direct_download_url("https://drive.google.com/file/u/0/d/1AbC-d_9/view"),direct);
+    expect_eq(direct_download_url("https://DRIVE.google.com/open?id=1AbC-d_9"),direct);
+    expect_eq(direct_download_url("https://drive.google.com/uc?export=download&id=1AbC-d_9"),direct);
+    expect_eq(direct_download_url("https://docs.google.com/uc?id=1AbC-d_9#x"),direct);
+    expect_eq(direct_download_url("https://drive.usercontent.google.com/download?id=1AbC-d_9&export=download"),direct);
+    expect_eq(direct_download_url("https://drive.google.com/file/d/1AbC-d_9/view?resourcekey=0-Xy_z"),direct+"&resourcekey=0-Xy_z");
+    expect_raises(std::runtime_error,[&]{direct_download_url("https://drive.google.com/drive/folders/1AbC");});
+    expect_raises(std::runtime_error,[&]{direct_download_url("https://docs.google.com/document/d/1AbC/edit");});
+    expect_raises(std::runtime_error,[&]{direct_download_url("https://drive.google.com/open?id=a%2Fb");});
+    expect_raises(std::runtime_error,[&]{caelum::mods::parse_manifest("CMOD1\n"+mod_hash+"\tx\thttps://drive.google.com/drive/folders/1AbC\n");});
+    // Dropbox dl=1, OneDrive shares API (Microsoft's documented share id), SharePoint download=1.
+    expect_eq(direct_download_url("https://www.dropbox.com/scl/fi/abc123/pack.zip?rlkey=k9z&st=s1&dl=0"),
+              std::string("https://www.dropbox.com/scl/fi/abc123/pack.zip?rlkey=k9z&st=s1&dl=1"));
+    expect_eq(direct_download_url("https://dropbox.com/s/abc123/pack.zip"),std::string("https://www.dropbox.com/s/abc123/pack.zip?dl=1"));
+    expect_eq(direct_download_url("https://onedrive.live.com/redir?resid=1231244193912!12&authKey=1201919!12921!1"),
+              std::string("https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly9vbmVkcml2ZS5saXZlLmNvbS9yZWRpcj9yZXNpZD0xMjMxMjQ0MTkzOTEyITEyJmF1dGhLZXk9MTIwMTkxOSExMjkyMSEx/root/content"));
+    expect_eq(direct_download_url("https://1drv.ms/u/s!AbCdEf-12345?e=xyz"),
+              std::string("https://api.onedrive.com/v1.0/shares/u!aHR0cHM6Ly8xZHJ2Lm1zL3UvcyFBYkNkRWYtMTIzNDU_ZT14eXo/root/content"));
+    expect_eq(direct_download_url("https://contoso-my.sharepoint.com/:u:/g/personal/a_contoso_com/EaBc?e=Xy1"),
+              std::string("https://contoso-my.sharepoint.com/:u:/g/personal/a_contoso_com/EaBc?download=1"));
+    expect_raises(std::runtime_error,[&]{direct_download_url("https://www.dropbox.com/scl/fo/abc/xyz?rlkey=1");});
+    expect_raises(std::runtime_error,[&]{direct_download_url("https://1drv.ms/f/s!AbC");});
+    expect_raises(std::runtime_error,[&]{direct_download_url("https://contoso.sharepoint.com/:f:/s/site/EaBc");});
+    const std::string share="https://drive.google.com/file/d/1AbC/view";
+    expect_eq(caelum::mods::parse_manifest("CMOD1\n"+mod_hash+"\tx\t"+share+"\n")[0].url,share); // wire keeps the link
+  }
+
+  phosg::log_info_f("-- Caelum card mods (cross-play)");
+  {
+    using namespace caelum::cardmods;
+    expect(!separated(false, true, false));
+    expect(!separated(true, true, true));
+    expect(!separated(true, false, false));
+    expect(separated(true, true, false));
+    expect(separated(true, false, true));
+
+    // Raw deflate: stored, fixed and dynamic blocks (zlib output, temp/card_mod_xplay_1112/deflate_vectors.py)
+    std::string content;
+    for (size_t z = 0; z < 60; z++) {
+      content += std::format("card {} ", z);
+    }
+    expect_eq(inflate_raw(phosg::parse_data_string("01d60129fe6361726420302063617264203120636172642032206361726420332063617264203420636172642035206361726420362063617264203720636172642038206361726420392063617264203130206361726420313120636172642031322063617264203133206361726420313420636172642031352063617264203136206361726420313720636172642031382063617264203139206361726420323020636172642032312063617264203232206361726420323320636172642032342063617264203235206361726420323620636172642032372063617264203238206361726420323920636172642033302063617264203331206361726420333220636172642033332063617264203334206361726420333520636172642033362063617264203337206361726420333820636172642033392063617264203430206361726420343120636172642034322063617264203433206361726420343420636172642034352063617264203436206361726420343720636172642034382063617264203439206361726420353020636172642035312063617264203532206361726420353320636172642035342063617264203535206361726420353620636172642035372063617264203538206361726420353920"), 0x1000), content);
+    expect_eq(inflate_raw(phosg::parse_data_string("4b4e2c4a5130504806518610ca08421943281308650aa1cc20943984b280509650ed3063a0e618420d32849a640835ca106a9621d43043a8698650e30ca1e61941cd3382b90b6a9e11d43c23a8794650f38ca0e61941cd33829a670435cf186a9e31d43c639847a1e61943cd33869a670c35cf186a9e31d43c63a8792650f34ca0e69940cd3381851cd43c13a8792650f34ca0e69940cd33819a670a35cf146a9e29d43c53a879a6b0a8809a670a35cf146a9e29d43c534b0500"), 0x1000), content);
+    expect_eq(inflate_raw(phosg::parse_data_string("35d1cb6d03310c40c156b684f0177bcb09ec0adcffc108383abd1307a4f4fafbbcaf9febf59fd8e4a636bd99cdefe6b1796e6ee387e1042848810a56c08216b8e0252fcf5ebce4252f79c94b5ef29257bce2d5399457bce215af78c52b5ef39ad7bc3e2fc76b5ef39ad7bce60d6f78c31bde9cafe00d6f78c39bfbfa02"), 0x1000), content);
+    expect_raises(std::runtime_error, [&] { inflate_raw(phosg::parse_data_string("35d1cb6d03310c40c156b684f0177bcb09ec0adcffc108383abd1307a4f4fafbbcaf9febf59fd8e4a636bd99cdefe6b1796e6ee387e1042848810a56c08216b8e0252fcf5ebce4252f79c94b5ef29257bce2d5399457bce215af78c52b5ef39ad7bc3e2fc76b5ef39ad7bce60d6f78c31bde9cafe00d6f78c39bfbfa02"), 100); });
+    expect_raises(std::runtime_error, [&] { inflate_raw(phosg::parse_data_string("35d1cb6d03310c40c156b684f0177bcb09ec0adcffc108383abd1307a4f4fafbbcaf9febf59fd8e4a636bd99cdefe6b1796e6ee387e1042848810a56c08216b8e0252fcf5ebce4252f79c94b5ef29257bce2d5399457bce215af78c52b5ef39ad7bc3e2fc76b5ef39ad7bce60d6f78c31bde9cafe00d6f78c39bfbfa02").substr(0, 60), 0x1000); });
+
+    // A card table REL: records {id at +0, type at +0x44}, the end record has a negative type
+    auto make_table = [](const std::vector<uint32_t>& ids) {
+      std::string rel;
+      for (uint32_t id : ids) {
+        std::string rec(0x128, '\0');
+        rec[0] = id >> 24, rec[1] = id >> 16, rec[2] = id >> 8, rec[3] = id;
+        rel += rec;
+      }
+      std::string end(0x128, '\0');
+      end[0] = 0x04, end[0x44] = static_cast<char>(0xFF);
+      rel += end;
+      const uint32_t root = rel.size(), count = ids.size() + 1;
+      for (uint32_t v : {0u, count}) {
+        rel.push_back(v >> 24), rel.push_back(v >> 16), rel.push_back(v >> 8), rel.push_back(v);
+      }
+      RELFileFooterBE footer;
+      footer.root_offset = root;
+      rel.append(reinterpret_cast<const char*>(&footer), sizeof(footer));
+      return rel;
+    };
+    expect_eq(card_table_ids(make_table({1, 2, 999})), (std::vector<uint32_t>{1, 2, 999}));
+    // A stored ZIP holding name -> data
+    auto make_zip = [](const std::vector<std::pair<std::string, std::string>>& files) {
+      std::string zip, central;
+      auto u16 = [](std::string& s, uint32_t v) { s.push_back(v), s.push_back(v >> 8); };
+      auto u32 = [&](std::string& s, uint32_t v) { u16(s, v), u16(s, v >> 16); };
+      for (const auto& [name, data] : files) {
+        const uint32_t local = zip.size();
+        u32(zip, 0x04034B50), u16(zip, 20), u16(zip, 0), u16(zip, 0), u32(zip, 0), u32(zip, 0);
+        u32(zip, data.size()), u32(zip, data.size()), u16(zip, name.size()), u16(zip, 0);
+        zip += name + data;
+        u32(central, 0x02014B50), u16(central, 20), u16(central, 20), u16(central, 0), u16(central, 0);
+        u32(central, 0), u32(central, 0), u32(central, data.size()), u32(central, data.size());
+        u16(central, name.size()), u16(central, 0), u16(central, 0), u16(central, 0), u16(central, 0);
+        u32(central, 0), u32(central, local);
+        central += name;
+      }
+      const uint32_t central_offset = zip.size();
+      zip += central;
+      u32(zip, 0x06054B50), u16(zip, 0), u16(zip, 0), u16(zip, files.size()), u16(zip, files.size());
+      u32(zip, central.size()), u32(zip, central_offset), u16(zip, 0);
+      return zip;
+    };
+    const std::set<uint32_t> stock{1, 2};
+    const auto table = prs_compress(make_table({1, 2, 999}));
+    auto pack = check_pack_bytes(make_zip({{"mod.txt", "name=x"}, {"cards/PSOCardDataTbl_Base.prs", table}}), stock);
+    expect(pack.result == PackCheck::Result::NEW_CARDS);
+    expect_eq(pack.new_card_ids, (std::vector<uint32_t>{999}));
+    expect(pack.blocks_cross_play());
+    pack = check_pack_bytes(make_zip({{"PsoCardDataTbl_Base.prs", table}}), {1, 2, 999});
+    expect(pack.result == PackCheck::Result::NO_NEW_CARDS); // a changed stock table (stats, text) is not new cards
+    expect(!pack.blocks_cross_play());
+    pack = check_pack_bytes(make_zip({{"mod.txt", "name=x"}, {"textures/card.png", "png"}}), stock);
+    expect(pack.result == PackCheck::Result::NO_NEW_CARDS); // cosmetic pack
+    pack = check_pack_bytes("not a zip", stock);
+    expect(pack.result == PackCheck::Result::UNREADABLE);
+    expect(pack.blocks_cross_play());
+    // A listed pack without a local copy counts as adding cards
+    const auto missing = check_manifest({{std::string(64, 'e'), "Missing", "https://example.test/m.zip"}},
+        "system/caelum-modpacks-static-test-missing", stock);
+    expect_eq(missing.size(), 1);
+    expect(missing[0].result == PackCheck::Result::NOT_FOUND);
+    expect(missing[0].blocks_cross_play());
+  }
+
+  phosg::log_info_f("-- Caelum server modpacks (key exchange, sealed card check)");
+  {
+    namespace sp = caelum::serverpack;
+    using namespace caelum::cardmods;
+    const auto server = sp::Identity::from_seed(sp::random_array<sp::Key>());
+    const auto other = sp::Identity::from_seed(sp::random_array<sp::Key>());
+    sp::Header header;
+    header.id = sp::random_array<sp::PackId>();
+    header.servers = {server.public_key};
+    const sp::Key key = sp::random_array<sp::Key>();
+    // F2 flag 4 -> 5
+    const sp::Key client_secret = sp::random_array<sp::Key>();
+    sp::KeyRequest request;
+    crypto_x25519_public_key(request.client_public.data(), client_secret.data());
+    request.packs = {header.id, sp::random_array<sp::PackId>()};
+    const auto parsed = sp::parse_key_request(sp::write_key_request(request) + std::string(3, '\0'));
+    const auto reply = sp::open_key_reply(sp::make_key_reply(server, parsed, {{header.id, key}}), client_secret, request.client_public);
+    expect(reply.server_identity == server.public_key);
+    expect_eq(reply.keys.size(), 1);
+    expect(reply.keys.at(header.id) == key);
+    expect(sp::parse_header(sp::write_header(header)).allows(server.public_key));
+    expect(!sp::parse_header(sp::write_header(header)).allows(other.public_key));
+    expect_raises(std::runtime_error, [&] {
+      sp::open_key_reply(sp::make_key_reply(server, parsed, {{header.id, key}}), sp::random_array<sp::Key>(), request.client_public);
+    });
+
+    // A sealed pack whose card table adds card 999 (stored ZIP; the table sealed with method 0)
+    std::string rel;
+    for (uint32_t id : {1u, 999u}) {
+      std::string rec(0x128, '\0');
+      rec[0] = id >> 24, rec[1] = id >> 16, rec[2] = id >> 8, rec[3] = id;
+      rel += rec;
+    }
+    std::string end_rec(0x128, '\0');
+    end_rec[0x44] = static_cast<char>(0xFF);
+    rel += end_rec;
+    const uint32_t root = rel.size();
+    for (uint32_t v : {0u, 3u}) {
+      rel.push_back(v >> 24), rel.push_back(v >> 16), rel.push_back(v >> 8), rel.push_back(v);
+    }
+    RELFileFooterBE footer;
+    footer.root_offset = root;
+    rel.append(reinterpret_cast<const char*>(&footer), sizeof(footer));
+    const std::string table = prs_compress(rel);
+    std::vector<std::pair<std::string, std::string>> files{
+        {sp::HEADER_FILE, sp::write_header(header)},
+        {"mod.txt", "name=x\nauthor=y\nversion=1\n"},
+        {sp::entry_name(0), sp::seal(key, header.id, "0", table)},
+        {sp::INDEX_FILE, sp::seal(key, header.id, "index", sp::write_index({{0, 0, static_cast<uint32_t>(table.size()), "x/PsoCardDataTbl_Base.prs"}}))}};
+    std::string zip, central;
+    auto u16 = [](std::string& s, uint32_t v) { s.push_back(v), s.push_back(v >> 8); };
+    auto u32 = [&](std::string& s, uint32_t v) { u16(s, v), u16(s, v >> 16); };
+    for (const auto& [name, data] : files) {
+      const uint32_t local = zip.size();
+      u32(zip, 0x04034B50), u16(zip, 20), u16(zip, 0), u16(zip, 0), u32(zip, 0), u32(zip, 0);
+      u32(zip, data.size()), u32(zip, data.size()), u16(zip, name.size()), u16(zip, 0);
+      zip += name + data;
+      u32(central, 0x02014B50), u16(central, 20), u16(central, 20), u16(central, 0), u16(central, 0);
+      u32(central, 0), u32(central, 0), u32(central, data.size()), u32(central, data.size());
+      u16(central, name.size()), u16(central, 0), u16(central, 0), u16(central, 0), u16(central, 0);
+      u32(central, 0), u32(central, local);
+      central += name;
+    }
+    const uint32_t central_offset = zip.size();
+    zip += central;
+    u32(zip, 0x06054B50), u16(zip, 0), u16(zip, 0), u16(zip, files.size()), u16(zip, files.size());
+    u32(zip, central.size()), u32(zip, central_offset), u16(zip, 0);
+    auto sealed = check_pack_bytes(zip, {1}, {{header.id, key}});
+    expect(sealed.result == PackCheck::Result::NEW_CARDS);
+    expect_eq(sealed.new_card_ids, (std::vector<uint32_t>{999}));
+    sealed = check_pack_bytes(zip, {1}); // no key: counted as adding cards
+    expect(sealed.result == PackCheck::Result::UNREADABLE);
+    expect(sealed.blocks_cross_play());
+    sealed = check_pack_bytes(zip, {1}, {{header.id, sp::random_array<sp::Key>()}}); // wrong key
+    expect(sealed.result == PackCheck::Result::UNREADABLE);
+  }
 
   phosg::log_info_f("-- Episode 3 login media capability");
   for (size_t pair = 0; pair < 0x10000; ++pair) {

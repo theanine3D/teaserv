@@ -88,6 +88,8 @@ set(SOURCES
     src/EnemyType.cc
     src/Episode3/AssistServer.cc
     src/Episode3/BattleRecord.cc
+    src/Episode3/CaelumCardMods.cc
+    src/Episode3/monocypher/monocypher.c
     src/Episode3/Card.cc
     src/Episode3/CardSpecial.cc
     src/Episode3/DataIndexes.cc
@@ -146,6 +148,7 @@ set(SOURCES
     src/StaticGameData.cc
     src/StaticTests.cc
     src/TeamIndex.cc
+    src/TeaservStats.cc
     src/TekkerAdjustmentSet.cc
     src/Text.cc
     src/TextIndex.cc
@@ -153,6 +156,8 @@ set(SOURCES
     src/WordSelectTable.cc
 )
 
+# Monocypher (Caelum server modpacks) builds as C++: the project-wide warning flags are C++-only
+set_source_files_properties(src/Episode3/monocypher/monocypher.c PROPERTIES LANGUAGE CXX)
 add_executable(newserv ${SOURCES})
 # Keep the upstream target name to minimize merge churn; brand the output file.
 set_target_properties(newserv PROPERTIES OUTPUT_NAME teaserv)

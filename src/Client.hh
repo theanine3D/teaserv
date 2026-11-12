@@ -138,6 +138,7 @@ public:
   bool caelum_mod_capable = false;
   bool caelum_mod_pending = false;
   bool caelum_mod_ready = false;
+  bool caelum_keys_sent = false;   // F2 flag 4 answered in this handshake (Episode3/ServerPack.hh)
 
   // Patch server state (only used for PC_PATCH and BB_PATCH versions)
   std::vector<PatchFileChecksumRequest> patch_file_checksum_requests;
