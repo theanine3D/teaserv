@@ -39,6 +39,10 @@ For model/texture/animation groups sharing the same location flags, supply a fou
 
 Without a fallback, original-compatible primary media remains visible to both profiles; incompatible groups are omitted for original clients. Selection is shared by initial configured-banner sends and extension snapshots, including builds with extensions OFF. Final send-time PRS size checks remain mandatory.
 
+### Managing the list in Teaserv Admin
+
+Settings > **Episode 3 lobby media** in [Teaserv Admin](TEASERV_ADMIN_GUI.md#episode-3-lobby-media) edits `Episode3LobbyBanners` and copies chosen files into `system/ep3/banners/`. Before saving it repeats the loader's checks for every entry: accepted extensions per type, PRS stream validity and decompressed size, BMP decoding and GVM encoding (byte-identical to the server's), the PC limits for primaries, the original limits for fallbacks, and the complete-fallback-group rule. Compressed sizes of `.bmp`, `.gvm` and `.bml` files come from the server program's own `compress-prs --optimal`; the walkthrough test confirms that the page's sizes equal the sizes the server logs when it loads the files. Each entry shows which clients receive it. Lists the loader accepts but the client or the extension scene baseline (`SceneService::check_baseline`) will not use as intended are flagged as notes: models or animations without their dependencies, a texture alone at a model location, more than eight location groups, overlapping location groups, duplicate types in one group, and fully transparent 32-bit BMPs. Changes apply with `reload config` for players who log in afterwards.
+
 ## Extension assets and scripting
 
 Large extension assets explicitly opt into PC preparation in their manifest:

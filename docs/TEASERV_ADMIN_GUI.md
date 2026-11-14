@@ -99,6 +99,9 @@ events, Episode 3, Games, Logging, Statistics. Each field has a short explanatio
   and offers a button for each: **Apply now (no restart)** sends `reload config`; **Restart the server now** restarts.
   Fields that need a restart are marked "needs a server restart": the game, DNS and other listening ports, and the
   statistics interval. The status window keeps a note of saved settings that still wait for a restart.
+- **Episode 3 lobby media** edits the pictures, models and animations of the Episode 3 card lobby: the
+  `Episode3LobbyBanners` list in `config.json` and its files in `system/ep3/banners/`. See "Episode 3 lobby media"
+  below.
 - **Caelum lobbies** edits `system/caelum-lobbies.txt` (extra card lobbies 20 to 63) as a list of names. Needs a
   restart.
 - **Caelum modpacks** edits `system/caelum-modpacks.txt` (the mod list players must have): name, download address
@@ -108,11 +111,59 @@ events, Episode 3, Games, Logging, Statistics. Each field has a short explanatio
 - **Other settings** is the fallback for every key that has no field: choose a key and edit its text exactly as it is
   in the file (for example `PortConfiguration`, the proxy destinations, quest and item tables, the `Extensions`
   group). The text is checked for mistakes before it is saved. A button opens `config.json` in your text editor.
+  `Episode3LobbyBanners` is not listed here; it has its own page.
 - **Admin program** holds the program's own settings: server folder, server program, folders with DLLs, start the
   server with the program, the stop time limit, how long logs are kept, how often live numbers are fetched.
 
 If `config.json` has a mistake that makes it unreadable, the window says where (line and column) and shows no
 fields until it is fixed.
+
+### Episode 3 lobby media
+
+Settings > **Episode 3 lobby media** lists every entry of `Episode3LobbyBanners` and lets you add, change, reorder and
+remove entries. What the server supports is described in [Larger Episode 3 lobby media](EXTENSIONS-PC-LOBBY-MEDIA.md);
+in short, each entry is one file shown at one or more fixed places in the card lobby:
+
+| Field | Meaning |
+| --- | --- |
+| Type | Texture (a picture), model or animation. A model needs a texture at the same places; an animation needs both. |
+| Places | Where in the lobby: a hexadecimal number of place bits. **Choose places...** shows the 32 places as tick boxes with their descriptions. Places 00800000 and above are meant for models. |
+| File | The file the server sends. Textures: `.bmp` (24 or 32 bits, square, 8x8 to 2048x2048, sides a power of 2), `.gvm` or `.gvm.prs`. Models and animations: `.gvm`, `.gvm.prs`, `.bml` or `.bml.prs`. |
+| Original-client file | Optional smaller file for original GameCube and Dolphin clients (the fourth field of the entry). |
+
+**Choose a file...** takes a file from anywhere. A file that is not in `system/ep3/banners/` yet is copied there when
+you press Save (files inside that folder, also in subfolders, are used where they are). If a different file with the
+same name is already there, the page asks before replacing it, and the old file is kept in `config-backups/`.
+Removing an entry leaves its file in the folder; the page lists files that no entry uses.
+
+**Checks.** The page reads every file the way the server does when it loads the list, and shows for each entry the
+compressed and decompressed size and who will see it: all players, only Caelum players (too large for original
+clients, who see nothing at those places), or Caelum players the main file and original clients the original-client
+file. A list the server would refuse is not saved, and the entry shows why:
+
+- the name must have one of the extensions above for its type, and the file must be readable;
+- BMP files must be 24-bit, or 32-bit (uncompressed or with byte-sized bit fields), square, with sides a power of 2
+  from 8 up; the page turns them into a GVM texture exactly as the server does;
+- main files must fit Caelum clients: at most `0x7BF0` bytes compressed and 16 MiB decompressed;
+- original-client files must fit original clients: at most `0x3800` bytes compressed and `0x36FFF` decompressed;
+- `.prs` files must be complete PRS data;
+- when one entry at some places has an original-client file, every entry at those places needs one, there may be only
+  one entry of each type there, and there must be a texture (and a model under an animation).
+
+The server compresses `.bmp`, `.gvm` and `.bml` files itself with its optimal PRS compressor. The page asks the server
+program for that size (`teaserv compress-prs --optimal`, run without a window), so the numbers are the server's own;
+a large picture can take up to a minute. Without the server program the page cannot know the compressed size of such
+a file; it says so and saves the list, and the server checks the size when it loads it.
+
+The page also points out lists the server accepts but that probably do not do what you want: a model or animation
+without its texture, a lone picture at a model place, a completely transparent 32-bit BMP, more than 8 groups of
+places (the game shows at most 8), places shared by two groups, and two entries of the same type at the same places.
+The last three also make Lua extension scenes refuse to run in that lobby.
+
+Saving rewrites only the `Episode3LobbyBanners` value in `config.json` (one entry per line, places in hexadecimal);
+comments inside that list are not kept. Media changes need no restart: press **Apply now** (`reload config`), and
+players see the new media the next time they log in. If the list in `config.json` is not a list the server accepts,
+the page says why and shows it empty; saving the page then replaces it.
 
 ## Logs
 
@@ -199,8 +250,9 @@ program says so.
 | Path (in the server folder unless noted) | What |
 | --- | --- |
 | `logs/teaserv-YYYY-MM-DD.log` | Saved server output |
-| `config-backups/` | Copies of `config.json` and the Caelum files from before each save |
+| `config-backups/` | Copies of `config.json`, the Caelum files and replaced lobby media files from before each save |
 | `system/config.json`, `system/caelum-lobbies.txt`, `system/caelum-modpacks.txt` | Only when you press Save |
+| `system/ep3/banners/` | Lobby media files you chose on the Episode 3 lobby media page, when you press Save |
 | `system/stats/YYYY-MM.jsonl` | Written by the server, read by the Statistics window |
 | `%APPDATA%\TeaservAdmin\settings.json` (Linux: `~/.config/teaserv-admin/settings.json`) | The program's own settings |
 
@@ -216,6 +268,7 @@ program says so.
 | `teaserv_admin/config_schema.py` | The fields of the Settings window: label, kind, checks, restart or reload |
 | `teaserv_admin/field_editors.py`, `settings_window.py` | Settings window |
 | `teaserv_admin/caelum_files.py` | Reading, checking and writing the Caelum text files |
+| `teaserv_admin/lobby_media.py` | The lobby media list and the server's checks for its files (sizes, PRS, BMP to GVM) |
 | `teaserv_admin/console_window.py`, `logs_window.py`, `stats_window.py`, `control_window.py` | The other windows |
 | `teaserv_admin/stats.py` | Reading `system/stats` and grouping it for the graphs |
 | `build_exe.py` | One-file build with PyInstaller |
@@ -230,7 +283,14 @@ python -m unittest discover -s tools/admin-gui/tests -p "test_*.py"   # no windo
 python tools/admin-gui/tests/failure_check.py --server-dir DIR --server-exe FILE [--extra-path FOLDERS] [--old-exe FILE]
 python tools/admin-gui/tests/tray_check.py --server-dir DIR --out DIR [--server-exe FILE] [--extra-path FOLDERS]
 python tools/admin-gui/tests/hidden_desktop.py python tools/admin-gui/tests/gui_walkthrough.py --server-dir DIR --out DIR [...]
+python tools/admin-gui/tests/hidden_desktop.py python tools/admin-gui/tests/lobby_media_check.py --out DIR [--server-exe FILE] [--extra-path FOLDERS]
 ```
+
+The unit tests include the lobby media checks; with `TEASERV_EXE` (default `build/server-on/teaserv.exe`) and, for a
+MinGW build, `TEASERV_EXTRA_PATH` set, they also compare the BMP-to-GVM encoder and the compressed sizes with the server
+program's own output. `lobby_media_check.py` drives the lobby media page on a throw-away server folder (no server is
+started); the walkthrough adds media through the page, applies it with `reload config`, restarts, and checks that the
+server loaded the files with exactly the sizes the page showed.
 
 `gui_walkthrough.py` drives the real windows against a real server and saves a picture of each. `hidden_desktop.py`
 runs it on a separate Windows desktop, so no test window appears on screen or takes the focus. Use a test copy of a

@@ -13,6 +13,7 @@ The server folder should be a test copy: its config.json is changed (and restore
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import sys
@@ -27,6 +28,9 @@ from teaserv_admin import app as app_module  # noqa: E402
 from teaserv_admin import jsonc, server  # noqa: E402
 
 import hidden_desktop  # noqa: E402
+from lobby_media_check import make_bmp  # noqa: E402
+
+MEDIA_FILES = ("gui-test-banner.bmp", "gui-test-caelum.gvm", "gui-test-fallback.bmp")
 
 
 class Walkthrough:
@@ -54,6 +58,20 @@ class Walkthrough:
                 copy = os.path.join(self.out, name + ".before-test")
                 shutil.copy2(path, copy)
                 self.kept_files.append((copy, path))
+        # Lobby media files the walkthrough copies into system/ep3/banners are removed at the end
+        self.banners = os.path.join(args.server_dir, "system", "ep3", "banners")
+        self.media_source = os.path.join(self.out, "media")
+        os.makedirs(self.media_source, exist_ok=True)
+        for name in MEDIA_FILES:
+            if os.path.exists(os.path.join(self.banners, name)):
+                raise RuntimeError("the test server already has %s in system/ep3/banners" % name)
+        with open(os.path.join(self.media_source, MEDIA_FILES[0]), "wb") as f:
+            f.write(make_bmp(64, 7))
+        with open(os.path.join(self.media_source, MEDIA_FILES[1]), "wb") as f:
+            # Decompresses beyond what original clients take: a Caelum-only texture with an original-client file
+            f.write(make_bmp(16, 8)[54:54 + 0x800] + bytes(0x3F800))
+        with open(os.path.join(self.media_source, MEDIA_FILES[2]), "wb") as f:
+            f.write(make_bmp(16, 9))
 
         options = app_module.parse_options(["--settings", settings_path, "--no-tray"])
         app_module.prepare_process()
@@ -122,6 +140,11 @@ class Walkthrough:
                 shutil.copy2(copy, path)
         except OSError:
             pass
+        for name in MEDIA_FILES:
+            try:
+                os.remove(os.path.join(self.banners, name))
+            except OSError:
+                pass
         with open(os.path.join(self.out, "results.json"), "w", encoding="utf-8") as f:
             json.dump({"failed": self.failed, "results": self.results, "dialogs": self.dialogs}, f, indent=2)
         try:
@@ -295,8 +318,8 @@ class Walkthrough:
                    self.log_text(before), "the server reports interval %s" % srv.stats.get("interval"))
 
         # 10. The other Settings pages
-        for number, title in enumerate(("Network", "Lobby events", "Episode 3", "Logging", "Caelum lobbies",
-                                        "Caelum modpacks", "Other settings", "Admin program")):
+        for number, title in enumerate(("Network", "Lobby events", "Episode 3", "Episode 3 lobby media", "Logging",
+                                        "Caelum lobbies", "Caelum modpacks", "Other settings", "Admin program")):
             panel = settings.panel_named(title)
             settings.show_panel(panel)
             if title == "Other settings":
@@ -333,8 +356,29 @@ class Walkthrough:
         settings.show_panel(modpacks)
         self.shot(settings, "08_settings_modpack_refused")
         modpacks.rows[-1][0].set("ab" * 32)
+        # Lobby media: a picture for all players, and a Caelum-only texture with an original-client picture
+        media = settings.panel_named("Episode 3 lobby media")
+        media.add()
+        media.items[-1]["places"].set("00000030")
+        media.set_file(media.items[-1], "file", os.path.join(self.media_source, MEDIA_FILES[0]))
+        media.add()
+        media.items[-1]["places"].set("00000800")
+        media.set_file(media.items[-1], "file", os.path.join(self.media_source, MEDIA_FILES[1]))
+        media.set_file(media.items[-1], "fallback", os.path.join(self.media_source, MEDIA_FILES[2]))
+        yield lambda: not media.checking()
+        settings.show_panel(media)
+        media.scroll.show_widget(media.items[-1]["box"])
+        yield 200
+        self.shot(settings, "08_settings_lobby_media_added")
         ok = settings.save()
         yield 300
+        media_list = self.config_value("Episode3LobbyBanners")
+        self.check("settings: lobby media list and files saved", ok and media_list[-2:] == [
+            [1, 0x30, MEDIA_FILES[0]], [1, 0x800, MEDIA_FILES[1], MEDIA_FILES[2]]] and all(
+            os.path.isfile(os.path.join(self.banners, n)) for n in MEDIA_FILES), media_list)
+        self.check("settings: lobby media can be applied without a restart",
+                   "Can be applied without a restart: Episode 3 lobby media" in settings.status.cget("text"),
+                   settings.status.cget("text"))
         lobbies_after = open(lobbies_path, encoding="utf-8", newline="").read()
         modpacks_after = open(modpacks_path, encoding="utf-8", newline="").read()
         self.check("settings: Caelum lobby added to the file", ok and lobbies_after ==
@@ -349,6 +393,30 @@ class Walkthrough:
         kept = sorted(n for n in os.listdir(app.settings.backup_dir) if n.startswith("caelum-"))
         self.check("settings: backups of both Caelum files exist", any(n.startswith("caelum-lobbies.txt.") for n in
                    kept) and any(n.startswith("caelum-modpacks.txt.") for n in kept), kept[-2:])
+        # "Apply now" (reload config): the running server reads the new list and its files
+        before = srv.seq
+        settings.do_reload()
+        yield 3000
+        text = self.log_text(before)
+        loaded = [t for t in text.split("\n") if "Loaded Episode 3 lobby banner" in t]
+        self.check("settings: the running server loaded the lobby media (reload)",
+                   "Applied" in settings.status.cget("text") and
+                   all(any(n in t for t in loaded) for n in MEDIA_FILES), loaded or settings.status.cget("text"))
+        # The sizes the page computed (Python BMP encoder, PRS reader, the server's compressor) are the server's
+        yield lambda: not media.checking() and media.report is not None
+        measured = {}
+        for result in media.report.entries:
+            for measure in (result.primary, result.fallback):
+                if measure is not None:
+                    measured[measure.filename] = (measure.decompressed, measure.compressed)
+        logged = {}
+        for line in loaded:
+            found = re.search(r"banners/(\S+) \(0x([0-9A-F]+) -> 0x([0-9A-F]+) bytes\)", line)
+            if found:
+                logged[found.group(1)] = (int(found.group(2), 16), int(found.group(3), 16))
+        self.check("settings: the lobby media page's sizes equal the server's", len(logged) == len(MEDIA_FILES) and
+                   all(measured.get(n) == logged.get(n) for n in MEDIA_FILES),
+                   "page %s, server %s" % ({n: measured.get(n) for n in MEDIA_FILES}, logged))
         # The server accepts the files this window wrote: restart and look for the new lobby in its log
         pid_before = srv.pid
         before = srv.seq
@@ -359,6 +427,9 @@ class Walkthrough:
         self.check("settings: the server created the lobby that was added",
                    "Caelum extra lobby 21 (GUI TEST LOBBY)" in text,
                    [t for t in text.split("\n") if "Caelum extra lobby" in t])
+        loaded = [t for t in text.split("\n") if "Loaded Episode 3 lobby banner" in t]
+        self.check("settings: the server loads the lobby media at start", all(
+            any(n in t for t in loaded) for n in MEDIA_FILES), loaded)
         settings.close()
 
         # 11. Logs: level filter and search

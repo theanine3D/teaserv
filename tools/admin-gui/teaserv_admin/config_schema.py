@@ -305,5 +305,9 @@ def all_fields():
             yield field
 
 
+# Keys with a page of their own in the Settings window (not shown under "Other settings")
+PAGE_KEYS = {"Episode3LobbyBanners"}
+
+
 def form_top_level_keys():
-    return {field.path[0] for field in all_fields()}
+    return {field.path[0] for field in all_fields()} | PAGE_KEYS
