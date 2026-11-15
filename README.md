@@ -1,8 +1,106 @@
 # Teaserv (fork of Newserv)
 
-Teaserv is a fork of Newserv created to enable online mod support for decomp/recomp-based ports of PSO's various versions, like Caelum (the Episode 3 PC port). Teaserv adds an opt-in Lua server extension system. See [extension setup and API](docs/EXTENSIONS.md), [native lobby scenes](docs/EXTENSIONS-SCENES.md), and the [upstream integration map](docs/EXTENSIONS-INTEGRATION.md). Lua extensions are disabled by default. Chat features use original client protocols; native decorations are limited by each client's documented capabilities. Teaserv should be considered highly experimental; if you want a stock, vanilla experience, newserv is strongly recommended instead.
+Teaserv is a fork of Newserv created to enable online mod support for decomp/recomp-based ports of PSO's various versions, such as Caelum (the Episode 3 PC port). Teaserv adds an opt-in Lua server extension system. See [extension setup and API](docs/EXTENSIONS.md), [native lobby scenes](docs/EXTENSIONS-SCENES.md), and the [upstream integration map](docs/EXTENSIONS-INTEGRATION.md). Lua extensions are disabled by default. Chat features use original client protocols; native decorations are limited by each client's documented capabilities. Teaserv should be considered highly experimental; if you want a stock, vanilla experience, newserv is strongly recommended instead.
 
 This fork builds `teaserv.exe` on Windows and `teaserv` on other platforms, in both extension build modes. Use that executable name in place of `newserv` in the upstream instructions below. The internal CMake target remains `newserv`.
+
+## Building Teaserv from source
+
+Use **this Teaserv checkout**, rather than the upstream Newserv repository or its release downloads, for Teaserv features. The upstream instructions below remain useful background, but use the steps in this section for this fork.
+
+Teaserv still uses CMake **3.22 or newer**, a compiler with **C++23** support, standalone Asio, Iconv, [phosg](https://github.com/fuzziqersoftware/phosg), and the `resource_file` library installed by [resource_dasm](https://github.com/fuzziqersoftware/resource_dasm). Build/install those dependencies first, using a compatible compiler and architecture. Their dependency requirements (including zlib) still apply. Dependencies are not downloaded automatically by Teaserv's CMake configuration.
+
+**A complete Teaserv build includes both the server and [Teaserv Admin](docs/TEASERV_ADMIN_GUI.md). Build the GUI every time you build the server, in either Lua mode. Every binary release must include both applications for its target platform.** The current CMake build only builds the server and tests; the GUI packaging commands below are a required additional step.
+
+The GUI build requires Python **3.9+** with Tk, pip, and PyInstaller. Install Tk through your platform's Python installer/package manager (for example, `python3-tk` on Ubuntu/Debian); verify it with `python3 -c "import tkinter"` (`python` on Windows). Use a Python virtual environment if required by your platform, then install the packaging dependency with `python3 -m pip install pyinstaller` (`python -m pip install pyinstaller` on Windows). Pillow is optional and adds the Windows executable icon. Build the GUI on the target platform; PyInstaller does not cross-compile it. The packaged GUI does not require users to install Python separately.
+
+There are two server build modes:
+
+| Mode | CMake option | Additional dependency |
+| --- | --- | --- |
+| Base Teaserv (default) | `-DNEWSERV_ENABLE_EXTENSIONS=OFF` | None beyond the normal Newserv dependencies |
+| Teaserv with Lua extensions | `-DNEWSERV_ENABLE_EXTENSIONS=ON` | Lua **5.4** development headers and library |
+
+Caelum modpack support is compiled into **both** modes; it does not require Lua. Monocypher is included in the source tree and compiled automatically. The Lua option controls the optional server extension host, not all Teaserv additions. Lua 5.5 is not a substitute for Lua 5.4.
+
+### macOS and Linux
+
+Install the normal dependencies as described in the upstream build section below, including building/installing phosg and resource_dasm. To build the base server, run these commands from the Teaserv checkout:
+
+```sh
+cmake -S . -B build/server-off -DCMAKE_BUILD_TYPE=Release -DNEWSERV_ENABLE_EXTENSIONS=OFF
+cmake --build build/server-off --parallel
+python3 tools/admin-gui/build_exe.py --out "$PWD/build/server-off" --work "$PWD/build/admin-off"
+```
+
+For the extension-enabled server, first install Lua 5.4:
+
+```sh
+# Ubuntu/Debian
+sudo apt-get install liblua5.4-dev
+# macOS (Homebrew)
+brew install lua@5.4
+```
+
+Then configure and build in a separate directory:
+
+```sh
+cmake -S . -B build/server-on -DCMAKE_BUILD_TYPE=Release -DNEWSERV_ENABLE_EXTENSIONS=ON
+cmake --build build/server-on --parallel
+python3 tools/admin-gui/build_exe.py --out "$PWD/build/server-on" --work "$PWD/build/admin-on"
+```
+
+On macOS, add `-DCMAKE_PREFIX_PATH="$(brew --prefix lua@5.4)"` to the configure command if needed for discovery. If your other dependencies use a custom install prefix, include that prefix in `CMAKE_PREFIX_PATH` too.
+
+### Windows (native MinGW-w64)
+
+Teaserv has also been built locally with native MinGW-w64 and Ninja; cross-compiling on macOS is not required. Use a recent MinGW-w64 C++23 compiler, CMake 3.22+, Ninja, and Git. The current Windows configuration uses GNU/MinGW-specific flags, so these commands assume MinGW rather than MSVC.
+
+1. Clone **Teaserv** with symlinks enabled (enable Windows Developer Mode or use an account allowed to create symlinks): `git clone -c core.symlinks=true https://github.com/theanine3D/teaserv.git`. For an existing checkout, ensure its data symlinks were actually checked out as links; changing the Git setting alone does not repair existing files.
+2. Build/install zlib, Iconv, phosg, and resource_dasm for the same MinGW architecture, and provide standalone Asio headers. For an extension-enabled build, also build/install Lua 5.4 for that toolchain.
+3. Put MinGW's `bin` directory and Ninja on `PATH`. In PowerShell, from the Teaserv checkout, adapt the dependency paths below to your installation:
+
+```powershell
+cmake -S . -B build/server-on -G Ninja `
+  -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ `
+  -DCMAKE_BUILD_TYPE=Release `
+  -DCMAKE_PREFIX_PATH="C:/teaserv-deps" `
+  -DASIO_INCLUDE_DIR="C:/teaserv-deps/include" `
+  -DNEWSERV_ENABLE_EXTENSIONS=ON `
+  -DLUA_INCLUDE_DIR="C:/teaserv-deps/include" `
+  -DLUA_LIBRARY="C:/teaserv-deps/lib/liblua.a" `
+  -DNEWSERV_WINDOWS_STATIC_LINK=OFF
+cmake --build build/server-on --parallel
+python tools/admin-gui/build_exe.py --out (Join-Path $PWD "build/server-on") --work (Join-Path $PWD "build/admin-on")
+```
+
+`C:/teaserv-deps` is an example install prefix, not a bundled directory. `LUA_INCLUDE_DIR` must contain `lua.h`; the Lua library filename may differ in your installation. If discovery fails, pass `Iconv_INCLUDE_DIRS` and `Iconv_LIBRARIES` explicitly; `phosg_DIR` and `resource_file_DIR` can point to their installed CMake package directories. `WINDOWS_ENV` is also supported as a hint for Asio and Iconv's `include`/`lib` directories.
+
+For the base build, use `build/server-off` for both the server build and GUI output (and `build/admin-off` for GUI work files), set `-DNEWSERV_ENABLE_EXTENSIONS=OFF`, and omit the two Lua arguments. The documented local MinGW setup requires `NEWSERV_WINDOWS_STATIC_LINK=OFF` because the default static link fails with duplicate C++ runtime definitions. With this option, matching MinGW runtime and dependency DLLs must be discoverable on `PATH` or alongside the executable. See [local Windows build details](docs/EXTENSIONS-VALIDATION.md#local-windows-build-environment) for the tested environment's dependency adjustment and data-symlink limitations; other Windows toolchains have not been established by those checks.
+
+### Running and checking the build
+
+The CMake target remains `newserv` (for example, `cmake --build build/server-on --target newserv`), but the output is **`teaserv` / `teaserv.exe`**. From the repository root, run `./build/server-on/teaserv` on macOS/Linux or `./build/server-on/teaserv.exe` in PowerShell; use `server-off` for the base build. Keep the working directory at the repository/data root containing `system/`.
+
+For a fresh source checkout, copy `system/config.example.json` to `system/config.json` and edit the copy before starting the server. Preserve an existing configuration. Lua packages additionally require the `Extensions` configuration described in [extension setup](docs/EXTENSIONS.md#build-and-enable); compiling with extensions enabled alone does not activate them.
+
+After building all targets, run:
+
+```sh
+ctest --test-dir build/server-on --output-on-failure
+```
+
+Use `server-off` to check the base build. Some full-host extension tests are registered only when Python 3 and phosg's `jsonformat` are available at configure time. The inherited `*.test.sh` tests need a compatible shell; native Windows CTest may report `BAD_COMMAND`. For the Windows replay/extension test selection, standalone Lua-only tests, and the isolated fixture needed when Git checked out data symlinks as text, see [reproducing checks](docs/EXTENSIONS-VALIDATION.md#reproduce-checks). `NEWSERV_EXTENSIONS_TESTS_ONLY=ON` builds extension tests only, **not a server**. `NEWSERV_TEST_DATA_DIR` selects integration-test data, not the running server's data directory.
+
+The current Dockerfile builds the base server with extensions **OFF**. It does not install Lua or expose an extension build argument; an extension-enabled image needs Lua 5.4 development files in the build stage, `-DNEWSERV_ENABLE_EXTENSIONS=ON` in the server configure command, and the Lua runtime library in the final image if dynamically linked.
+
+### Required GUI and binary release contents
+
+The GUI commands above place `Teaserv Admin.exe` (Windows) or `teaserv-admin` (Linux) beside the server in the selected build directory. On macOS, retain the generated `teaserv-admin.app` bundle as well; macOS GUI packaging and launch have not been verified locally. Keep the same output directory when rebuilding so that the two applications are delivered together. A successful server-only CMake build is not a complete Teaserv build.
+
+Every binary release must contain the matching server executable, the packaged Teaserv Admin application, the required `system/` data and configuration example, applicable licenses, and any runtime libraries needed by that server build. Preserve the GUI's generated application bundle/resources where applicable. Verify that both applications launch from the assembled release folder on the target platform and that Admin can select, start, and stop the included server before publishing. Users may still run the server directly; inclusion and building of Admin are mandatory.
+
+The current Dockerfile and inherited release tooling do not automatically package Admin. Their server output alone does not satisfy the complete build/release requirement; include the matching GUI packaging step and bundle its output when preparing a binary release. See [Teaserv Admin](docs/TEASERV_ADMIN_GUI.md) for GUI operation and settings.
 
 Note: AI assistance has been used in this project.
 

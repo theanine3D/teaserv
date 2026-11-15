@@ -8,6 +8,10 @@ normal command shell.
 It lives in `tools/admin-gui/`. Upstream files carry only the few small hooks listed in the
 [integration map](EXTENSIONS-INTEGRATION.md).
 
+## Building and distribution
+
+Teaserv Admin is a mandatory part of every complete Teaserv build and every binary release, with Lua extensions enabled or disabled. Follow the [Teaserv build instructions](../README.md#building-teaserv-from-source) to build the server and package Admin together. Python 3.9+ with Tk and PyInstaller are build requirements; released GUI applications do not require a separate Python installation. Running the GUI directly from Python remains available for development.
+
 ## Starting it
 
 You need the server folder: the folder that holds `system/` (with `system/config.json`) and the server program
@@ -17,8 +21,7 @@ and the `stats` command; see "What the server gained" below).
 - **With Python 3.9 or newer installed** (tested with 3.10 and 3.13; with Tk, which the Windows installer includes): double-click
   `tools/admin-gui/teaserv_admin.pyw`, or run `pythonw tools/admin-gui/teaserv_admin.pyw`. No other packages are
   needed.
-- **Without Python**: build one file once with `python tools/admin-gui/build_exe.py` (needs PyInstaller). Copy the
-  result, `Teaserv Admin.exe`, next to `teaserv.exe` and double-click it.
+- **From a binary release**: launch the included `Teaserv Admin.exe` (Windows) or `teaserv-admin` (Linux), supplied alongside the server. Builders must package it using `tools/admin-gui/build_exe.py` as part of the complete build; see the instructions above.
 
 At the first start the program looks for the server folder next to itself, above itself and in the current folder. If
 it finds none, it opens **Settings > Admin program**, where you choose the folder. Options:
