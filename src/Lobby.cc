@@ -300,6 +300,12 @@ void Lobby::load_maps() {
   return true;
 }
 
+std::shared_ptr<const Episode3::CardIndex> Lobby::ep3_card_catalog() const {
+  if (this->ep3_cards) return this->ep3_cards;
+  auto s = this->require_server_state();
+  return this->is_ep3_nte() ? s->data->ep3_card_index_trial : s->data->ep3_card_index;
+}
+
 void Lobby::create_ep3_server() {
   auto s = this->require_server_state();
   if (!this->ep3_server) {
@@ -311,7 +317,7 @@ void Lobby::create_ep3_server() {
 
   bool is_nte = this->is_ep3_nte();
   Episode3::Server::Options options = {
-      .card_index = is_nte ? s->data->ep3_card_index_trial : s->data->ep3_card_index,
+      .card_index = this->ep3_card_catalog(),
       .map_index = s->data->ep3_map_index,
       .behavior_flags = s->data->ep3_behavior_flags,
       .opt_rand_stream = nullptr,
@@ -622,8 +628,8 @@ Lobby::JoinError Lobby::join_error_for_client(std::shared_ptr<Client> c, const s
   if (this->is_game()) {
     // A stock game cannot hold cards that a server card mod added; debug access does not lift this
     auto s = this->server_state.lock();
-    if (s && caelum::cardmods::separated(
-                 s->caelum_card_mods_active, this->check_flag(Flag::CAELUM_MODDED), c->caelum_mod_ready)) {
+    if (this->episode == Episode::EP3 && s &&
+        caelum::cardmods::incompatible(this->ep3_card_catalog(), c->ep3_card_catalog())) {
       return JoinError::CAELUM_CARD_MODS;
     }
     if (this->check_flag(Flag::QUEST_SELECTION_IN_PROGRESS)) {

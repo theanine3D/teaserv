@@ -306,6 +306,12 @@ void Client::convert_account_to_temporary_if_nte() {
   }
 }
 
+std::shared_ptr<const Episode3::CardIndex> Client::ep3_card_catalog() const {
+  if (this->ep3_cards) return this->ep3_cards;
+  auto s = this->require_server_state();
+  return this->version() == Version::GC_EP3_NTE ? s->data->ep3_card_index_trial : s->data->ep3_card_index;
+}
+
 std::shared_ptr<ServerState> Client::require_server_state() const {
   auto server = this->server.lock();
   if (!server) {

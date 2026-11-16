@@ -379,7 +379,17 @@ static asio::awaitable<void> on_login_complete(std::shared_ptr<Client> c) {
     // clients and Newserv-compatible logins never see an unknown command.
     if(c->caelum_mod_pending)co_return;
     const std::string manifest=s->load_caelum_modpack_manifest(); // rejects malformed server config before sending
-    s->update_caelum_card_mods(manifest,false); // the list may have changed since startup
+    try {
+      s->update_caelum_card_mods(manifest,false); // the list may have changed since startup
+    } catch (const std::exception& e) {
+      c->log.error_f("Cannot prepare Caelum card catalog: {}", e.what());
+      send_message_box(c, "$C7The server could not load its modpack card data. Please contact the server administrator.");
+      c->channel->disconnect();
+      co_return;
+    }
+    c->ep3_cards = s->caelum_card_index;
+    c->caelum_session_pack_keys = s->caelum_pack_keys;
+    c->clear_flag(Client::Flag::HAS_EP3_CARD_DEFS);
     c->caelum_mod_pending=true;
     c->send_ping_timer.cancel();
     c->idle_timeout_timer.expires_after(std::chrono::minutes(30));
@@ -1275,6 +1285,8 @@ static asio::awaitable<void> on_9D_9E(std::shared_ptr<Client> c, Channel::Messag
   c->caelum_mod_pending = false;
   c->caelum_keys_sent = false;
   c->caelum_mod_ready = false;
+  c->ep3_cards.reset();
+  c->caelum_session_pack_keys.reset();
   const C_Login_DC_PC_GC_9D* base_cmd;
   auto s = c->require_server_state();
 
@@ -1864,11 +1876,11 @@ static bool start_ep3_battle_table_game_if_ready(std::shared_ptr<Lobby> l, int16
   // Server card mods: Caelum and stock clients do not battle together
   {
     auto s = l->require_server_state();
-    const bool first_is_caelum = game_clients.begin()->second->caelum_mod_ready;
+    const auto first_catalog = game_clients.begin()->second->ep3_card_catalog();
     for (const auto& [_, gc] : game_clients) {
-      if (caelum::cardmods::separated(s->caelum_card_mods_active, first_is_caelum, gc->caelum_mod_ready)) {
+      if (caelum::cardmods::incompatible(first_catalog, gc->ep3_card_catalog())) {
         for (const auto& [__, tc] : game_clients) {
-          send_lobby_message_box(tc, "$C7Card mods are active\non this server: Caelum\nplayers and players of\nthe original game\ncannot play together.");
+          send_lobby_message_box(tc, "$C7These players have different\ncard rules and cannot play\nor trade together. Reconnect\nto get the current modpacks.");
         }
         return false;
       }
@@ -2895,7 +2907,7 @@ static void on_10_game_menu(std::shared_ptr<Client> c, uint32_t item_id, const s
       send_lobby_message_box(c, "$C7You don't have access\nto the quest in progress\nin this game, or there\nis no space for another\nplayer in the quest.");
       break;
     case Lobby::JoinError::CAELUM_CARD_MODS:
-      send_lobby_message_box(c, "$C7Card mods are active\non this server: Caelum\nplayers and players of\nthe original game\ncannot play together.");
+      send_lobby_message_box(c, "$C7These players have different\ncard rules and cannot play\nor trade together. Reconnect\nto get the current modpacks.");
       break;
     default:
       send_lobby_message_box(c, "$C7You cannot join this\ngame.");
@@ -3082,12 +3094,12 @@ static void on_10_tournament_entries(
   if (tourn) {
     // Server card mods: a tournament's matches are played at battle tables, so its players must all be Caelum
     // clients or all stock clients. Registered players are compared while they are connected.
-    if (s->caelum_card_mods_active) {
+    {
       for (const auto& other_team : tourn->all_teams()) {
         for (const auto& player : other_team->players) {
           auto other_c = player.is_human() ? player.client.lock() : nullptr;
-          if (other_c && caelum::cardmods::separated(true, other_c->caelum_mod_ready, c->caelum_mod_ready)) {
-            send_lobby_message_box(c, "$C7Card mods are active\non this server: Caelum\nplayers and players of\nthe original game\ncannot play together.");
+          if (other_c && caelum::cardmods::incompatible(other_c->ep3_card_catalog(), c->ep3_card_catalog())) {
+            send_lobby_message_box(c, "$C7These players have different\ncard rules and cannot play\nor trade together. Reconnect\nto get the current modpacks.");
             return;
           }
         }
@@ -4718,6 +4730,9 @@ std::shared_ptr<Lobby> create_game_generic(
   if (creator_c->check_flag(Client::Flag::IS_CLIENT_CUSTOMIZATION)) {
     game->set_flag(Lobby::Flag::IS_CLIENT_CUSTOMIZATION);
   }
+  if (episode == Episode::EP3) {
+    game->ep3_cards = watched_lobby ? watched_lobby->ep3_card_catalog() : creator_c->ep3_card_catalog();
+  }
   if (creator_c->caelum_mod_ready) {
     game->set_flag(Lobby::Flag::CAELUM_MODDED); // the game's side for server card mods (Episode3/CaelumCardMods.hh)
   }
@@ -4997,9 +5012,8 @@ static asio::awaitable<void> on_0C_C1_E7_EC(std::shared_ptr<Client> c, Channel::
         send_lobby_message_box(c, "$C7This game does not\nallow spectators");
         co_return;
       }
-      if (caelum::cardmods::separated(s->caelum_card_mods_active,
-              watched_lobby->check_flag(Lobby::Flag::CAELUM_MODDED), c->caelum_mod_ready)) {
-        send_lobby_message_box(c, "$C7Card mods are active\non this server: Caelum\nplayers and players of\nthe original game\ncannot play together.");
+      if (caelum::cardmods::incompatible(watched_lobby->ep3_card_catalog(), c->ep3_card_catalog())) {
+        send_lobby_message_box(c, "$C7These players have different\ncard rules and cannot play\nor trade together. Reconnect\nto get the current modpacks.");
         co_return;
       }
     }
@@ -5456,11 +5470,10 @@ static asio::awaitable<void> on_EE_Ep3(std::shared_ptr<Client> c, Channel::Messa
     }
     // Server card mods: no card trades between a Caelum and a stock client (they cannot share a game either; this
     // covers games made before the mod list changed)
-    if (caelum::cardmods::separated(
-            c->require_server_state()->caelum_card_mods_active, c->caelum_mod_ready, target_c->caelum_mod_ready)) {
+    if (caelum::cardmods::incompatible(c->ep3_card_catalog(), target_c->ep3_card_catalog())) {
       S_CardTradeComplete_Ep3_EE_FlagD4 resp = {0};
       send_command_t(c, 0xEE, 0xD4, resp);
-      send_lobby_message_box(c, "$C7Card mods are active\non this server: Caelum\nplayers and players of\nthe original game\ncannot play together.");
+      send_lobby_message_box(c, "$C7These players have different\ncard rules and cannot play\nor trade together. Reconnect\nto get the current modpacks.");
       co_return;
     }
 
@@ -6139,8 +6152,8 @@ asio::awaitable<void> on_command(std::shared_ptr<Client> c, std::unique_ptr<Chan
       auto s=c->require_server_state();
       try {
         const auto request=caelum::serverpack::parse_key_request(msg->data);
-        if(!s->caelum_identity || !s->caelum_pack_keys)throw std::runtime_error("no Caelum server identity");
-        send_command(c,0xF2,5,caelum::serverpack::make_key_reply(*s->caelum_identity,request,*s->caelum_pack_keys));
+        if(!s->caelum_identity || !c->caelum_session_pack_keys)throw std::runtime_error("no Caelum server identity");
+        send_command(c,0xF2,5,caelum::serverpack::make_key_reply(*s->caelum_identity,request,*c->caelum_session_pack_keys));
       } catch(const std::exception& e) {
         c->log.warning_f("Caelum server modpack key request refused: {}", e.what());
         c->channel->disconnect();

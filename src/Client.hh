@@ -10,6 +10,7 @@
 #include "ClientFunctionIndex.hh"
 #include "CommandFormats.hh"
 #include "Episode3/BattleRecord.hh"
+#include "Episode3/CaelumCardMods.hh"
 #include "Episode3/Tournament.hh"
 #include "PSOEncryption.hh"
 #include "PSOProtocol.hh"
@@ -138,6 +139,9 @@ public:
   bool caelum_mod_capable = false;
   bool caelum_mod_pending = false;
   bool caelum_mod_ready = false;
+  std::shared_ptr<const Episode3::CardIndex> ep3_cards;
+  std::shared_ptr<const caelum::cardmods::PackKeys> caelum_session_pack_keys;
+  std::shared_ptr<const Episode3::CardIndex> ep3_card_catalog() const;
   bool caelum_keys_sent = false;   // F2 flag 4 answered in this handshake (Episode3/ServerPack.hh)
 
   // Patch server state (only used for PC_PATCH and BB_PATCH versions)

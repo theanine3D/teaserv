@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -20,6 +21,7 @@
 //
 // Teaserv reads the packs from a local folder (system/caelum-modpacks/, or CAELUM_MODPACK_DIR), matched by SHA-256.
 // A listed pack with no local copy, or one that cannot be read, counts as adding cards: the safe side.
+namespace Episode3 { class CardIndex; }
 namespace caelum::cardmods {
 
 constexpr const char* CARD_TABLE_FILE = "psocarddatatbl_base.prs"; // lower case; compared case-insensitively
@@ -53,6 +55,17 @@ std::vector<PackCheck> check_manifest(
     const std::vector<caelum::mods::Requirement>& packs, const std::filesystem::path& pack_dir,
     const std::set<uint32_t>& stock_ids, const PackKeys& keys = {});
 std::filesystem::path pack_dir();
+
+// The last matching entry in the last manifest pack wins, just like the client file overlay.
+// Missing/corrupt/unlockable packs fail the handshake, never silently fall back to stock rules.
+std::shared_ptr<const Episode3::CardIndex> load_catalog(
+    const std::vector<caelum::mods::Requirement>& packs, const std::filesystem::path& dir,
+    std::shared_ptr<const Episode3::CardIndex> stock, const PackKeys& keys = {});
+std::shared_ptr<const Episode3::CardIndex> catalog_for_pack_bytes(
+    const std::string& zip, std::shared_ptr<const Episode3::CardIndex> previous,
+    const PackKeys& keys = {});
+bool incompatible(std::shared_ptr<const Episode3::CardIndex> a,
+    std::shared_ptr<const Episode3::CardIndex> b);
 
 // Caelum client (finished the modpack handshake) and stock client may share play unless a listed pack adds cards.
 constexpr bool separated(bool card_mods_active, bool a_is_caelum, bool b_is_caelum) {

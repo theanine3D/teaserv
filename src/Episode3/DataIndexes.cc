@@ -7,6 +7,7 @@
 #include <deque>
 #include <filesystem>
 #include <phosg/Filesystem.hh>
+#include <phosg/Hash.hh>
 #include <phosg/Random.hh>
 #include <phosg/Time.hh>
 
@@ -2832,6 +2833,81 @@ CardIndex::CardIndex(
   } catch (const std::exception& e) {
     static_game_data_log.warning_f("Failed to load Episode 3 card update: {}", e.what());
   }
+  this->gameplay_hash = this->compute_gameplay_fingerprint();
+}
+
+std::string CardIndex::compute_gameplay_fingerprint() const {
+  phosg::StringWriter w;
+  for (uint32_t id : this->all_ids()) {
+    auto def = this->card_definitions.at(id)->def;
+    // These four fields are deliberately retained from the client by 8023D448.
+    def.jp_name.clear(); def.en_name.clear(); def.jp_short_name.clear(); def.en_short_name.clear();
+    w.write(&def, sizeof(def));
+  }
+  return phosg::SHA256(w.str()).hex();
+}
+
+const std::string& CardIndex::gameplay_fingerprint() const {
+  return this->gameplay_hash;
+}
+
+std::shared_ptr<const CardIndex> CardIndex::from_rel_data(
+    const std::string& data, const CardIndex* descriptions) {
+  if (data.size() < sizeof(RELFileFooterBE) || data.size() > 0x36EC0) {
+    throw std::runtime_error("Card table is too small or exceeds the game's card table limit");
+  }
+  phosg::StringReader r(data);
+  const auto& footer = r.pget<RELFileFooterBE>(data.size() - sizeof(RELFileFooterBE));
+  uint32_t root = footer.root_offset;
+  if ((root & 3) || root > data.size() - sizeof(RELFileFooterBE) - 8) {
+    throw std::runtime_error("Card table has an invalid root");
+  }
+  uint32_t array = r.pget_u32b(root), count = r.pget_u32b(root + 4);
+  if ((array & 3) || !count || count > 752 || array > root || count * sizeof(CardDefinition) > root - array) {
+    throw std::runtime_error("Card table has an invalid record array");
+  }
+  auto index = std::shared_ptr<CardIndex>(new CardIndex());
+  bool sentinel = false;
+  for (size_t z = 0; z < count; z++) {
+    auto def = r.pget<CardDefinition>(array + z * sizeof(CardDefinition));
+    if (static_cast<int8_t>(def.type) < 0) {
+      if (z + 1 != count) throw std::runtime_error("Card table has records after its end marker");
+      sentinel = true;
+      break;
+    }
+    uint32_t id = def.card_id;
+    if (!id || id >= 0x2F0 || static_cast<uint8_t>(def.type) > 5) {
+      throw std::runtime_error("Card table has an unsupported card ID or type");
+    }
+    auto entry = std::make_shared<CardEntry>(CardEntry{def, {}, "", "", "", {}});
+    if (descriptions) {
+      auto it = descriptions->card_definitions.find(id);
+      if (it != descriptions->card_definitions.end()) {
+        *entry = *it->second;
+        entry->def = def;
+      }
+    }
+    entry->def.hp.decode_code(); entry->def.ap.decode_code();
+    entry->def.tp.decode_code(); entry->def.mv.decode_code(); entry->def.decode_range();
+    if (!index->card_definitions.emplace(id, entry).second) {
+      throw std::runtime_error("Card table contains duplicate card IDs");
+    }
+    std::string name = entry->def.en_name.decode(Language::ENGLISH);
+    index->card_definitions_by_name.emplace(name, entry);
+    index->card_definitions_by_name_normalized.emplace(normalize_card_name(name), entry);
+  }
+  if (!sentinel || index->card_definitions.empty()) throw std::runtime_error("Card table has no cards or end marker");
+  // Keep the original REL for the client's B8 refresh. The server entries are decoded separately above.
+  index->compressed_card_definitions = prs_compress(data);
+  if (index->compressed_card_definitions.size() > 0x7BF8) {
+    index->compressed_card_definitions = prs_compress_optimal(data.data(), data.size());
+  }
+  if (index->compressed_card_definitions.size() > 0x7BF8) {
+    throw std::runtime_error("Card table is too large to send to the game");
+  }
+  index->defs_hash = phosg::fnv1a64(data);
+  index->gameplay_hash = index->compute_gameplay_fingerprint();
+  return index;
 }
 
 const std::string& CardIndex::get_compressed_definitions() const {

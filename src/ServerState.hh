@@ -64,6 +64,9 @@ public:
   // Caelum: a pack of the server mod list adds cards, so Caelum and stock clients play apart
   // (Episode3/CaelumCardMods.hh). Set at startup and whenever a Caelum client is sent the list.
   std::atomic<bool> caelum_card_mods_active = false;
+  // Latest successful catalog; clients/games pin immutable snapshots. Stock DataIndex never changes.
+  std::shared_ptr<const Episode3::CardIndex> caelum_card_index;
+  std::string caelum_card_catalog_signature;
   // Caelum server modpacks (Episode3/ServerPack.hh): this server's identity and the pack keys it may hand out.
   // Loaded at startup and with the mod list (update_caelum_card_mods).
   std::shared_ptr<const caelum::serverpack::Identity> caelum_identity;

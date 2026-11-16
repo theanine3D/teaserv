@@ -7,10 +7,36 @@
 #include "Episode3/Modpacks.hh"
 #include "Episode3/CaelumLobbies.hh"
 #include "Episode3/CaelumCardMods.hh"
+#include "Episode3/Server.hh"
+#include "Episode3/RulerServer.hh"
+#include "Episode3/DataIndexes.hh"
+#include <phosg/Filesystem.hh>
+#include <phosg/Hash.hh>
+#include <phosg/Time.hh>
+#include "Client.hh"
+#include "GameServer.hh"
+#include "ServerState.hh"
+#include "SendCommands.hh"
 #include "Compression.hh"
 #include "CommandFormats.hh"
 #include "PSOProtocol.hh"
 #include "Text.hh"
+
+namespace {
+// No sockets, accounts on disk, login secrets or running server are used by this protocol fixture.
+struct CardCatalogTestState : ServerState { CardCatalogTestState() : ServerState() {} };
+class CardCatalogTestChannel : public Channel {
+public:
+  std::vector<std::string> packets;
+  explicit CardCatalogTestChannel(Version v) : Channel(v, Language::ENGLISH, "card-catalog-test",
+      phosg::TerminalFormat::NORMAL, phosg::TerminalFormat::NORMAL, true, true) {}
+  std::string default_name() const override { return "card-catalog-test"; }
+  bool connected() const override { return true; }
+  void disconnect() override {}
+  void send_raw(std::string&& data) override { this->packets.emplace_back(std::move(data)); }
+  asio::awaitable<void> recv_raw(void*, size_t) override { throw std::logic_error("fixture does not receive"); co_return; }
+};
+}
 
 void run_static_tests() {
   phosg::log_info_f("-- Quest opcode definitions");
@@ -210,6 +236,131 @@ void run_static_tests() {
     pack = check_pack_bytes("not a zip", stock);
     expect(pack.result == PackCheck::Result::UNREADABLE);
     expect(pack.blocks_cross_play());
+
+    phosg::log_info_f("-- Caelum effective card catalog and battle rules");
+    // The actual server definitions can contain every custom ID without altering the stock baseline.
+    auto table_with_types = [&](bool extra) {
+      std::vector<uint32_t> ids{1,2,3,4,5,6,7,8,9,10,11};
+      if (extra) ids.emplace_back(740);
+      auto rel = make_table(ids);
+      for (size_t z = 1; z < ids.size(); z++) rel[z * 0x128 + 0x44] = 4; // action cards
+      return rel;
+    };
+    auto stock_rel = table_with_types(false), custom_rel = table_with_types(true);
+    auto stock_index = Episode3::CardIndex::from_rel_data(stock_rel);
+    auto custom_zip = make_zip({{"new/PsoCardDataTbl_Base.prs", prs_compress(custom_rel)}});
+    auto custom_index = catalog_for_pack_bytes(custom_zip, stock_index);
+    expect_eq(custom_index->all_ids().size(), 12);
+    expect_eq(stock_index->all_ids().size(), 11);
+    expect_raises(std::out_of_range, [&] { stock_index->definition_for_id(740); });
+    expect_eq(custom_index->definition_for_id(740)->def.card_id, 740);
+    expect(incompatible(stock_index, custom_index));
+    expect(!incompatible(custom_index, custom_index));
+    expect(!incompatible(stock_index, catalog_for_pack_bytes(make_zip({{"art.png", "png"}}), stock_index)));
+    // A later matching entry replaces the whole file; it does not merge the earlier table.
+    auto winner = catalog_for_pack_bytes(make_zip({
+        {"a/PsoCardDataTbl_Base.prs", prs_compress(custom_rel)},
+        {"b/PSOCARDDATATBL_BASE.PRS", prs_compress(stock_rel)}}), stock_index);
+    expect(!incompatible(stock_index, winner));
+    expect_eq(winner->all_ids().size(), 11);
+    expect_eq(prs_decompress(custom_index->get_compressed_definitions()), custom_rel); // B8 has exactly these rules
+    // Names do not change gameplay compatibility, but an existing card's cost/abilities do.
+    auto renamed = stock_rel; renamed[0xA0] = 'X';
+    expect(!incompatible(stock_index, Episode3::CardIndex::from_rel_data(renamed)));
+    auto changed = stock_rel; changed[0x128 + 0x45] = 5;
+    auto changed_index = Episode3::CardIndex::from_rel_data(changed);
+    expect(incompatible(stock_index, changed_index));
+    expect_eq(changed_index->definition_for_id(2)->def.self_cost, 5);
+    auto malformed = custom_rel; malformed[0x128 + 3] = 1; // duplicate ID
+    expect_raises(std::runtime_error, [&] { Episode3::CardIndex::from_rel_data(malformed); });
+    expect_raises(std::runtime_error, [&] { Episode3::CardIndex::from_rel_data(make_table({752})); });
+    expect_raises(std::runtime_error, [&] { Episode3::CardIndex::from_rel_data(std::string(0x36EC1, '\0')); });
+    expect_raises(std::runtime_error, [&] { catalog_for_pack_bytes(make_zip({{"PsoCardDataTbl_Base.prs", "broken PRS"}}), stock_index); });
+    // Pinning does not change old sessions when the latest catalog changes or reverts to stock.
+    auto old_session = custom_index; auto latest = changed_index; latest = stock_index;
+    expect_eq(old_session->all_ids().size(), 12);
+    expect(incompatible(old_session, latest));
+    // Exercise the actual native battle verifier, with and without the new ID in its index.
+    parray<le_uint16_t, 0x1F> deck;
+    deck[0] = 1;
+    for (size_t z = 1; z < deck.size(); z++) deck[z] = 2 + (z - 1) / 3;
+    deck[1] = 740;
+    auto engine = [&](std::shared_ptr<const Episode3::CardIndex> index) {
+      return std::make_shared<Episode3::Server>(nullptr,
+          Episode3::Server::Options{.card_index = index, .map_index = nullptr, .behavior_flags = 0,
+              .opt_rand_stream = nullptr, .rand_crypt = std::make_shared<PSOV2Encryption>(1),
+              .tournament = nullptr, .trap_card_ids = {}, .output_queue = nullptr});
+    };
+    auto stock_engine = engine(stock_index), custom_engine = engine(custom_index);
+    Episode3::RulerServer stock_ruler(stock_engine), custom_ruler(custom_engine);
+    expect_eq(stock_ruler.verify_deck(deck), -0x7C);
+    expect_eq(custom_ruler.verify_deck(deck), 0);
+    expect_eq(custom_engine->definition_for_card_id(740)->def.type, Episode3::CardType::ACTION);
+    // Exercise the actual B8 sender and lobby entry guard, rather than only testing a hash helper.
+    auto state = std::make_shared<CardCatalogTestState>();
+    state->io_context = std::make_shared<asio::io_context>(1);
+    state->data = std::make_shared<DataIndex>();
+    state->data->ep3_card_index = stock_index;
+    state->data->ep3_card_index_trial = stock_index;
+    auto game_server = std::make_shared<GameServer>(state);
+    auto make_client = [&](Version version) {
+      auto channel = std::make_shared<CardCatalogTestChannel>(version);
+      auto client = std::make_shared<Client>(game_server, channel, static_cast<ServerBehavior>(0));
+      client->login = std::make_shared<Login>();
+      client->login->account = std::make_shared<Account>();
+      client->login->account->set_flag(Account::Flag::FREE_JOIN_GAMES);
+      return std::make_pair(client, channel);
+    };
+    auto [custom_client, custom_channel] = make_client(Version::GC_EP3);
+    custom_client->caelum_mod_ready = true;
+    custom_client->ep3_cards = custom_index;
+    send_ep3_card_list_update(custom_client);
+    expect_eq(custom_channel->packets.size(), 1);
+    phosg::StringReader b8(custom_channel->packets.back());
+    expect_eq(b8.pget_u8(0), 0xB8);
+    expect_eq(prs_decompress(b8.preadx(8, b8.pget_u32l(4))), custom_rel);
+    custom_client->set_flag(Client::Flag::HAS_EP3_CARD_DEFS);
+    send_ep3_card_list_update(custom_client);
+    expect_eq(custom_channel->packets.size(), 1);
+    auto [original_client, original_channel] = make_client(Version::GC_EP3);
+    send_ep3_card_list_update(original_client);
+    phosg::StringReader stock_b8(original_channel->packets.back());
+    expect_eq(prs_decompress(stock_b8.preadx(8, stock_b8.pget_u32l(4))), stock_rel);
+    state->caelum_card_index = changed_index;
+    expect(custom_client->ep3_card_catalog() == custom_index);
+    expect(original_client->ep3_card_catalog() == stock_index);
+    auto game = std::make_shared<Lobby>(state, 1, true);
+    game->episode = Episode::EP3; game->max_clients = 4; game->allow_version(Version::GC_EP3);
+    game->ep3_cards = custom_index;
+    expect_eq(game->join_error_for_client(original_client, nullptr), Lobby::JoinError::CAELUM_CARD_MODS);
+    expect_eq(game->join_error_for_client(custom_client, nullptr), Lobby::JoinError::ALLOWED);
+    custom_client->ep3_cards = changed_index;
+    expect_eq(game->join_error_for_client(custom_client, nullptr), Lobby::JoinError::CAELUM_CARD_MODS);
+    auto [ordinary_client, ordinary_channel] = make_client(Version::GC_V3);
+    game->episode = Episode::EP1; game->allow_version(Version::GC_V3);
+    expect_eq(game->join_error_for_client(ordinary_client, nullptr), Lobby::JoinError::ALLOWED);
+
+    // Manifest loading verifies bytes by SHA-256, uses manifest order, and fails closed on missing packs.
+    auto dir = std::filesystem::temp_directory_path() / std::format("teaserv-card-catalog-{}", phosg::now());
+    expect(std::filesystem::create_directories(dir));
+    expect(std::filesystem::canonical(dir).parent_path() == std::filesystem::canonical(std::filesystem::temp_directory_path()));
+    try {
+      phosg::save_file((dir / "custom.zip").string(), custom_zip);
+      auto stock_zip = make_zip({{"PsoCardDataTbl_Base.prs", prs_compress(stock_rel)}});
+      phosg::save_file((dir / "stock.zip").string(), stock_zip);
+      caelum::mods::Requirement a{phosg::tolower(phosg::SHA256(custom_zip).hex()), "custom", "https://example.invalid/a.zip"};
+      caelum::mods::Requirement b{phosg::tolower(phosg::SHA256(stock_zip).hex()), "stock", "https://example.invalid/b.zip"};
+      expect(!incompatible(stock_index, load_catalog({a, b}, dir, stock_index)));
+      expect(!incompatible(custom_index, load_catalog({b, a}, dir, stock_index)));
+      auto missing = a; missing.sha256 = std::string(64, '0');
+      expect_raises(std::runtime_error, [&] { load_catalog({missing}, dir, stock_index); });
+      expect(!incompatible(stock_index, load_catalog({}, dir, stock_index)));
+    } catch (...) {
+      std::filesystem::remove_all(dir);
+      throw;
+    }
+    std::filesystem::remove_all(dir);
+
     // A listed pack without a local copy counts as adding cards
     const auto missing = check_manifest({{std::string(64, 'e'), "Missing", "https://example.test/m.zip"}},
         "system/caelum-modpacks-static-test-missing", stock);
@@ -244,9 +395,9 @@ void run_static_tests() {
       sp::open_key_reply(sp::make_key_reply(server, parsed, {{header.id, key}}), sp::random_array<sp::Key>(), request.client_public);
     });
 
-    // A sealed pack whose card table adds card 999 (stored ZIP; the table sealed with method 0)
+    // A sealed pack whose card table adds card 740 (stored ZIP; the table sealed with method 0)
     std::string rel;
-    for (uint32_t id : {1u, 999u}) {
+    for (uint32_t id : {1u, 740u}) {
       std::string rec(0x128, '\0');
       rec[0] = id >> 24, rec[1] = id >> 16, rec[2] = id >> 8, rec[3] = id;
       rel += rec;
@@ -287,7 +438,11 @@ void run_static_tests() {
     u32(zip, central.size()), u32(zip, central_offset), u16(zip, 0);
     auto sealed = check_pack_bytes(zip, {1}, {{header.id, key}});
     expect(sealed.result == PackCheck::Result::NEW_CARDS);
-    expect_eq(sealed.new_card_ids, (std::vector<uint32_t>{999}));
+    expect_eq(sealed.new_card_ids, (std::vector<uint32_t>{740}));
+    auto sealed_index = catalog_for_pack_bytes(zip, nullptr, {{header.id, key}});
+    expect_eq(sealed_index->definition_for_id(740)->def.card_id, 740);
+    expect_eq(prs_decompress(sealed_index->get_compressed_definitions()), rel);
+    expect_raises(std::runtime_error, [&] { catalog_for_pack_bytes(zip, nullptr); });
     sealed = check_pack_bytes(zip, {1}); // no key: counted as adding cards
     expect(sealed.result == PackCheck::Result::UNREADABLE);
     expect(sealed.blocks_cross_play());

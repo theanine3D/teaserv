@@ -109,38 +109,55 @@ The client also bounds downloads to 1 GiB and verifies the full server list
 before publishing any session overrides. Interrupted downloads do not install
 partial ZIPs. Server installs never create `.enabled` sidecars.
 
-### Card mods and stock clients
+### Card definitions and compatible players (2026-11-16)
 
-A pack that adds new cards gives Caelum clients cards that a stock Episode III
-client does not have: seeing such a card in a battle, or receiving it in a trade,
-could crash a stock game or damage its save. While any pack of the mod list adds
-cards, Teaserv keeps the two kinds of client apart. Caelum clients are those that
-finished the modpack handshake (E3/02 + F2); every other Episode III client is a
-stock client. Lobbies stay shared. Separated:
+Teaserv now loads the effective Episode III card table from the same verified
+server-listed packs as Caelum. The original `system/ep3/card-definitions.mnr`
+(or `.mnrd`, which takes precedence) remains the stock baseline and is never
+rewritten by this feature. Do not copy modded definitions over that baseline.
 
-* games: each game remembers whether a Caelum client made it (lobby flag
-  `CAELUM_MODDED`); the other kind cannot join it ("Card mods are active..."),
-  and it shows as not joinable in the game list;
-* battle tables: a table with both kinds does not start a match;
-* spectator teams: a spectator team cannot watch a game of the other kind;
-* tournaments: a player cannot register while a connected player of the other
-  kind is registered (matches are played at battle tables as well);
-* card trades are refused across kinds (they happen inside games, so this only
-  covers games from before the list changed).
+Put each listed ZIP in `system/caelum-modpacks/` (or `CAELUM_MODPACK_DIR`), matching
+the SHA-256 in the manifest. Sealed server packs also require their key in the
+existing server keys file. On preparation of a new manifest, the server verifies
+local ZIP hashes and reads their `PsoCardDataTbl_Base.prs` entries, case-insensitively
+in any folder. The last matching entry in the last manifest pack wins, matching
+Caelum's whole-file override order; card tables are not merged by ID. Packs with
+no card table retain the preceding catalog. Preparation fails for unavailable,
+unreadable or ununlockable packs or invalid tables; it never silently substitutes
+stock rules for an unprepared modded catalog. Successfully prepared immutable
+catalogs are reused for the same manifest, baseline and keys.
 
-Packs that do not add cards (card art, models, text, scenes, changed stats of
-existing cards) leave cross-play open.
+Each Caelum client pins that catalog before the F2 handshake, along with the keys
+for that handshake. Once the handshake finishes, B8 sends its pinned definitions.
+Games pin their creator's catalog; spectator games pin the watched game's catalog.
+Deck validation and battle rules use that game's catalog. This supports new IDs
+and changed existing-card stats/abilities without manually installing a second
+server card database. Card artwork, models and localized text still come from the
+client pack. Entirely new mechanics still need matching engine support.
 
-How Teaserv decides: it reads each listed pack from `system/caelum-modpacks/`
-(or the folder named by `CAELUM_MODPACK_DIR`), finding it by SHA-256 among the
-`*.zip` files there. A pack adds cards when its card table
-(`PsoCardDataTbl_Base.prs`, in any folder of the ZIP) holds a card ID that
-`system/ep3/card-definitions.mnr` lacks; the table's end record is ignored. **A
-listed pack without a local copy, or one that cannot be read, counts as adding
-cards**, so copy every pack ZIP into that folder. The check runs at startup and
-again whenever a Caelum client is sent the list; the server log names each pack's
-result. `teaserv check-caelum-modpacks <zip>...` (run where `system/ep3` is)
-prints the same check for any ZIPs. Code: `src/Episode3/CaelumCardMods.cc`.
+Stock clients continue to receive the stock index, including the separate trial
+index. The server compares gameplay definitions rather than merely the Caelum
+login marker. Full/short card names are excluded from this comparison, as the
+client B8 refresh retains those four fields. Different rules keep players apart
+in game joins/listings, battle tables, spectators, tournament registration and
+card trades. Thus an existing-ID stat change also isolates incompatible players,
+and clients from before/after a pack-list change cannot silently mix. Identical
+rules, including cosmetic-only packs, permit normal cross-play. The original
+catalog remains the comparison baseline even when modded catalogs contain new IDs.
+
+Old sessions and games keep their snapshots when the manifest or keys change.
+Reconnect to negotiate current packs; return to stock selects the original catalog
+for new sessions without rewriting existing games. Decompressed tables must fit
+0x36EC0 bytes, IDs must be 1..751, and the compressed B8 update must fit 0x7BF8
+bytes. Duplicate IDs, unsupported types and missing/misplaced end markers are
+refused before normal Caelum login resumes.
+
+`teaserv check-caelum-modpacks <zip>...` remains an added-ID diagnostic, not the
+catalog builder or final compatibility decision. `run-static-tests` exercises the
+strict catalog loader, real Episode III deck validation, names versus gameplay
+changes, pack ordering, encrypted packs, snapshot retention and missing/corrupt
+inputs. Code: `Episode3/CaelumCardMods`, `Episode3/DataIndexes`, `ServerState`,
+`Client`, `Lobby`, `ReceiveCommands` and `SendCommands`.
 
 ### Server modpacks
 

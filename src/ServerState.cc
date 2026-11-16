@@ -1,4 +1,5 @@
 #include "ServerState.hh"
+#include <phosg/Hash.hh>
 
 #include <fstream>
 #include <sstream>
@@ -514,6 +515,9 @@ static std::shared_ptr<const std::map<caelum::serverpack::PackId, caelum::server
 
 void ServerState::update_caelum_card_mods(const std::string& manifest, bool log_all) {
   const auto packs = caelum::mods::parse_manifest(manifest);
+  if (!this->data || !this->data->ep3_card_index) {
+    throw std::runtime_error("The server's original card database is missing");
+  }
   if (!this->caelum_identity) {
     this->caelum_identity = load_caelum_identity(true);
   }
@@ -545,8 +549,22 @@ void ServerState::update_caelum_card_mods(const std::string& manifest, bool log_
           check.result == R::NOT_FOUND ? ". Put its ZIP in " + caelum::cardmods::pack_dir().string() : std::string());
     }
   }
+  // Include stock definitions and keys in cache identity; neither is logged or changed here.
+  std::string signature = manifest + std::to_string(this->data->ep3_card_index->definitions_hash());
+  for (const auto& [id, key] : *this->caelum_pack_keys) {
+    signature.append(reinterpret_cast<const char*>(id.data()), id.size());
+    signature.append(reinterpret_cast<const char*>(key.data()), key.size());
+  }
+  signature = phosg::SHA256(signature).hex();
+  if (!this->caelum_card_index || signature != this->caelum_card_catalog_signature) {
+    auto catalog = caelum::cardmods::load_catalog(packs, caelum::cardmods::pack_dir(),
+        this->data->ep3_card_index, *this->caelum_pack_keys);
+    this->caelum_card_index = std::move(catalog);
+    this->caelum_card_catalog_signature = signature;
+  }
+  active |= caelum::cardmods::incompatible(this->caelum_card_index, this->data->ep3_card_index);
   if (log_all || active != this->caelum_card_mods_active) {
-    config_log.info_f("{}", active ? "Caelum card mods active: Caelum and stock clients play apart" : "No Caelum card mods: Caelum and stock clients may play together");
+    config_log.info_f("{}", active ? "Caelum card rules differ: games require matching card catalogs" : "Caelum card rules match the original game");
   }
   this->caelum_card_mods_active = active;
 }

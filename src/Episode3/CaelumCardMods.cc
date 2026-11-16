@@ -452,6 +452,57 @@ PackCheck check_pack_bytes(const std::string& zip, const std::set<uint32_t>& sto
   return check;
 }
 
+bool incompatible(std::shared_ptr<const Episode3::CardIndex> a,
+    std::shared_ptr<const Episode3::CardIndex> b) {
+  if (a == b) return false;
+  return !a || !b || a->gameplay_fingerprint() != b->gameplay_fingerprint();
+}
+
+std::shared_ptr<const Episode3::CardIndex> catalog_for_pack_bytes(
+    const std::string& zip, std::shared_ptr<const Episode3::CardIndex> previous, const PackKeys& keys) {
+  const auto tables = card_tables(zip, keys);
+  if (tables.empty()) return previous;
+  // Whole-file replacement, never merge independent tables. Matches pso_mods.cpp::lookup.
+  return Episode3::CardIndex::from_rel_data(prs_decompress(tables.back(), 0x36EC0), previous.get());
+}
+
+std::shared_ptr<const Episode3::CardIndex> load_catalog(
+    const std::vector<caelum::mods::Requirement>& packs, const std::filesystem::path& dir,
+    std::shared_ptr<const Episode3::CardIndex> stock, const PackKeys& keys) {
+  if (!stock || stock->all_ids().empty()) throw std::runtime_error("The server's original card database is missing");
+  auto result = stock;
+  // Read each archive only once and verify the exact bytes used to construct the catalog.
+  // Names/URLs never select local archives: only the authenticated manifest SHA-256 does.
+  std::map<std::string, std::vector<std::string>> archives;
+  std::set<std::string> wanted;
+  for (const auto& pack : packs) wanted.emplace(pack.sha256);
+  std::error_code ec;
+  if (!packs.empty() && std::filesystem::is_directory(dir, ec)) {
+    for (const auto& item : std::filesystem::directory_iterator(dir)) {
+      if (!item.is_regular_file() || lower(item.path().extension().string()) != ".zip") continue;
+      auto data = phosg::load_file(item.path().string());
+      const std::string hash = lower(phosg::SHA256(data).hex());
+      if (wanted.count(hash)) {
+        auto tables = card_tables(data, keys);
+        if (tables.size() > 1) tables.erase(tables.begin(), tables.end() - 1);
+        archives.emplace(hash, std::move(tables)); // retain only small card data, not every pack's textures/models
+      }
+    }
+  }
+  for (const auto& pack : packs) {
+    auto it = archives.find(pack.sha256);
+    if (it == archives.end()) throw std::runtime_error("Server modpack is missing from the server's local pack folder: " + pack.name);
+    try {
+      if (!it->second.empty()) {
+        result = Episode3::CardIndex::from_rel_data(prs_decompress(it->second.back(), 0x36EC0), result.get());
+      }
+    } catch (const std::exception& e) {
+      throw std::runtime_error("Cannot load cards from server modpack " + pack.name + ": " + e.what());
+    }
+  }
+  return result;
+}
+
 std::filesystem::path pack_dir() {
   const char* env = std::getenv("CAELUM_MODPACK_DIR");
   return (env && *env) ? std::filesystem::path(env) : std::filesystem::path("system/caelum-modpacks");

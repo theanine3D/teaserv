@@ -1505,6 +1505,11 @@ public:
       const std::string& decompressed_dice_text_filename = "",
       bool text_is_sjis = false);
 
+  // Strict in-memory loader for the effective Caelum table. No temporary files or stock mutation.
+  static std::shared_ptr<const CardIndex> from_rel_data(
+      const std::string& data, const CardIndex* descriptions = nullptr);
+  const std::string& gameplay_fingerprint() const;
+
   struct CardEntry {
     CardDefinition def;
     std::vector<std::string> text_pages;
@@ -1523,13 +1528,16 @@ public:
   uint64_t definitions_hash() const;
 
 private:
+  CardIndex() = default;
+  std::string compute_gameplay_fingerprint() const;
   static std::string normalize_card_name(const std::string& name);
 
   std::string compressed_card_definitions;
   std::unordered_map<uint32_t, std::shared_ptr<CardEntry>> card_definitions;
   std::unordered_map<std::string, std::shared_ptr<CardEntry>> card_definitions_by_name;
   std::unordered_map<std::string, std::shared_ptr<CardEntry>> card_definitions_by_name_normalized;
-  uint64_t defs_hash;
+  uint64_t defs_hash = 0;
+  std::string gameplay_hash;
 };
 
 class MapIndex {

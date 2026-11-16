@@ -3333,9 +3333,9 @@ void send_gallon_plan_result(
 void send_ep3_card_list_update(std::shared_ptr<Client> c) {
   if (!c->check_flag(Client::Flag::HAS_EP3_CARD_DEFS)) {
     auto s = c->require_server_state();
-    const auto& data = (c->version() == Version::GC_EP3_NTE)
-        ? s->data->ep3_card_index_trial->get_compressed_definitions()
-        : s->data->ep3_card_index->get_compressed_definitions();
+    // Pin stock sessions too: a later config reload must not change rules behind a client.
+    if (!c->ep3_cards) c->ep3_cards = c->ep3_card_catalog();
+    const auto& data = c->ep3_card_catalog()->get_compressed_definitions();
 
     phosg::StringWriter w;
     w.put_u32l(data.size());

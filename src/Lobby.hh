@@ -153,6 +153,8 @@ struct Lobby : public std::enable_shared_from_this<Lobby> {
   // 3. Replay games. These lobbies replay a sequence of battle and chat commands from a previous primary game.
   // Types 2 and 3 are distinguished by the presence of the battle_record field - in replay games, it will be present;
   // in watcher games it will be absent.
+  std::shared_ptr<const Episode3::CardIndex> ep3_cards; // Immutable rules for players and spectators of this game.
+  std::shared_ptr<const Episode3::CardIndex> ep3_card_catalog() const;
   std::shared_ptr<Episode3::Server> ep3_server; // Only used in primary games
   std::weak_ptr<Lobby> watched_lobby; // Only used in watcher games
   std::unordered_set<std::shared_ptr<Lobby>> watcher_lobbies; // Only used in primary games
