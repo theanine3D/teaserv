@@ -8,6 +8,8 @@ starts). The split follows DataIndex::load_config_early: ports and listen addres
 import ipaddress
 import re
 
+from . import caelum_files
+
 RELOAD = "reload"
 RESTART = "restart"
 
@@ -201,9 +203,11 @@ TOPICS = [
     ("General", "Name and messages players see.", [
         Field("ServerName", "Server name", "text", max_length=16,
               help="Shown in the upper-right corner of the screen in lobbies. At most 16 characters."),
-        Field("WelcomeMessage", "Welcome message", "multiline",
+        # apply=RESTART (user 2026-11-17): a changed message reached players only after the server restarted
+        Field("WelcomeMessage", "Welcome message", "multiline", apply=RESTART,
               help="Shown to GameCube players when they connect. Leave empty for no message. "
-                   "PSO colour codes such as $C6 work."),
+                   "PSO colour codes such as $C6 work. Players see a changed message only after the server "
+                   "restarts."),
         Field("Episode3MenuSong", "Episode 3 menu music", "choice", optional=True,
               choices=[(n, "%d: %s" % (n, name)) for n, name in enumerate(EP3_SONGS)],
               help="Song Episode 3 players hear at the server's main menu. \"(not set)\" keeps the game's own music."),
@@ -299,10 +303,32 @@ TOPICS = [
 ]
 
 
+# The built-in modpack download server (src/TeaservModpackHttp.cc). Shown on the "Caelum modpacks" page, above the
+# packs whose download addresses they produce, rather than on a topic page of their own.
+MODPACK_DOWNLOAD_FIELDS = [
+    Field("TeaservModpackHTTPEnabled", "Serve the modpacks from this server", "bool", apply=RESTART, optional=True,
+          help="For servers without another web host for their ZIPs. Teaserv then sends each ZIP in the folder "
+               "below to players itself, and this page fills in every download address automatically. Off by "
+               "default."),
+    Field("TeaservModpackHTTPPort", "Download server port", "int", apply=RESTART, optional=True,
+          default=caelum_files.DEFAULT_DOWNLOAD_PORT, min=1, max=65535,
+          help="TCP port for the downloads. Empty: the default, 80. Choose another port, such as 8080, if another "
+               "program already uses port 80. Players on the Internet need this port forwarded on your router."),
+    Field("TeaservModpackHTTPAddress", "Address players download from", "text", apply="login", optional=True,
+          pattern=caelum_files.HOST_PATTERN,
+          pattern_help="Enter a host name such as example.com, or an IPv4 address such as 203.0.113.5 (no http://, "
+                       "port or path).",
+          help="Host name or IPv4 address of this PC as players reach it, without http:// or a port. Empty: the "
+               "External address under Network (it must then be an IPv4 address). Only the download addresses "
+               "use it; the server does not need a restart."),
+]
+
+
 def all_fields():
     for _, _, fields in TOPICS:
         for field in fields:
             yield field
+    yield from MODPACK_DOWNLOAD_FIELDS
 
 
 # Keys with a page of their own in the Settings window (not shown under "Other settings")

@@ -30,6 +30,11 @@ class ControlWindow(tk.Toplevel):
 
         buttons, self.update_buttons = ui.server_buttons(body, app)
         buttons.pack(anchor="w")
+        # Right of Restart: keep this window above other windows (remembered in the admin settings)
+        self.on_top = tk.BooleanVar(value=bool(app.settings["status_always_on_top"]))
+        ttk.Checkbutton(buttons, text="Always On Top", variable=self.on_top, command=self.set_on_top).pack(
+            side="left", padx=(6, 0))
+        self.attributes("-topmost", self.on_top.get())
         ttk.Separator(body).pack(fill="x", pady=12)
         windows = ttk.Frame(body)
         windows.pack(anchor="w")
@@ -60,6 +65,15 @@ class ControlWindow(tk.Toplevel):
         self.app.server.stats_listeners.remove(self.on_stats)
         self.app.window_closed("control")
         self.destroy()
+
+    def set_on_top(self):
+        on = self.on_top.get()
+        self.attributes("-topmost", on)
+        self.app.settings["status_always_on_top"] = on
+        try:
+            self.app.settings.save()
+        except OSError:
+            pass  # still applies for this session
 
     def on_state(self, state, detail):
         self.refresh()

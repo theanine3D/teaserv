@@ -20,6 +20,7 @@
 #include "Loggers.hh"
 #include "ServerState.hh"
 #include "ShellCommands.hh"
+#include "TeaservModpackHttp.hh"
 #include "Version.hh"
 
 namespace teaserv_stats {
@@ -242,9 +243,13 @@ void start(std::shared_ptr<ServerState> state) {
   } else {
     config_log.info_f("Statistics recording is off (TeaservStatsInterval is 0)");
   }
+
+  // The optional modpack download server starts here too, so it needs no call site in upstream code.
+  teaserv_modpack_http::start(state);
 }
 
 void stop() {
+  teaserv_modpack_http::stop();
   if (!started || !interval_secs) {
     return;
   }

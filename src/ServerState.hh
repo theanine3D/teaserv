@@ -114,6 +114,15 @@ public:
   std::string load_caelum_modpack_manifest() const;
   void update_caelum_card_mods(const std::string& manifest, bool log_all);
 
+  // Caelum voice chat (CaelumVoiceServer.cc). The server relays connection messages only, never voice.
+  std::unique_ptr<caelum::voice::TurnServer> caelum_voice_turn;
+  void caelum_voice_start_relay();
+  caelum::voice::Room caelum_voice_room(std::shared_ptr<Lobby> l) const;
+  void caelum_voice_room_changed(std::shared_ptr<Lobby> l);
+  void caelum_voice_send_config(std::shared_ptr<Client> c);
+  void caelum_voice_set_state(std::shared_ptr<Client> c, uint8_t state);
+  void caelum_voice_relay(std::shared_ptr<Client> from, const std::string& data);
+
   std::shared_ptr<Client> find_client(
       const std::string* identifier = nullptr, uint64_t account_id = 0, std::shared_ptr<Lobby> l = nullptr);
 

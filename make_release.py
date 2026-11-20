@@ -32,6 +32,8 @@ def main():
 
     print("Adding system directory")
     shutil.copytree("system", "release/system")
+    os.makedirs("release/system/caelum-modpacks", exist_ok=True)
+    filter_directory("release/system/caelum-modpacks", lambda filename: False)
 
     print("Removing instance-based and temporary files")
     filter_directory(

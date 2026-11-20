@@ -400,6 +400,9 @@ static asio::awaitable<void> on_login_complete(std::shared_ptr<Client> c) {
     co_return;
   }
   c->convert_account_to_temporary_if_nte();
+  if (c->caelum_mod_ready) {
+    s->caelum_voice_send_config(c); // voice chat available here: ICE servers (CaelumVoice.hh)
+  }
 
   if (!is_v4(c->version())) {
     send_set_guild_card_number(c);
@@ -5809,6 +5812,35 @@ static asio::awaitable<void> on_ignored(std::shared_ptr<Client>, Channel::Messag
   co_return;
 }
 
+// Caelum extension commands after login (F2 flags 1-5 belong to the login handshake above). Voice chat: CaelumVoice.hh.
+static asio::awaitable<void> on_F2_Ep3(std::shared_ptr<Client> c, Channel::Message& msg) {
+  if (!c->caelum_mod_ready) {
+    throw std::runtime_error("Caelum command from a client that did not complete the Caelum handshake");
+  }
+  auto s = c->require_server_state();
+  switch (msg.flag) {
+    case caelum::voice::FLAG_STATE:
+      // Game packets are padded to 4 bytes: the state byte arrives as "01 00 00 00". A malformed one is ignored, never
+      // fatal (voice chat must not cost a player the connection).
+      try {
+        s->caelum_voice_set_state(c, caelum::voice::parse_state(msg.data));
+      } catch (const std::exception& e) {
+        c->log.warning_f("Voice state ignored: {}", e.what());
+      }
+      break;
+    case caelum::voice::FLAG_SIGNAL:
+      try {
+        s->caelum_voice_relay(c, msg.data);
+      } catch (const std::exception& e) {
+        c->log.warning_f("Voice signal refused: {}", e.what());
+      }
+      break;
+    default:
+      c->log.warning_f("Ignoring unknown Caelum command F2 flag {:02X}", msg.flag);
+  }
+  co_return;
+}
+
 typedef asio::awaitable<void> (*on_command_t)(std::shared_ptr<Client> c, Channel::Message& msg);
 
 // Command handler table, indexed by command number and game version. Null entries in this table cause
@@ -6074,7 +6106,7 @@ static on_command_t handlers[0x100][NUM_VERSIONS] = {
 //        PC_PATCH BB_PATCH DC_NTE          DC_PROTO        DCV1            DCV2            PC-NTE       PC           GCNTE           GC              EP3TE           EP3             XB              BB
 /* F0 */ {nullptr, nullptr, nullptr,        nullptr,        nullptr,        nullptr,        nullptr,     nullptr,     nullptr,        nullptr,        nullptr,        nullptr,        nullptr,        nullptr},
 /* F1 */ {nullptr, nullptr, nullptr,        nullptr,        nullptr,        nullptr,        nullptr,     nullptr,     nullptr,        nullptr,        nullptr,        nullptr,        nullptr,        nullptr},
-/* F2 */ {nullptr, nullptr, nullptr,        nullptr,        nullptr,        nullptr,        nullptr,     nullptr,     nullptr,        nullptr,        nullptr,        nullptr,        nullptr,        nullptr},
+/* F2 */ {nullptr, nullptr, nullptr,        nullptr,        nullptr,        nullptr,        nullptr,     nullptr,     nullptr,        nullptr,        nullptr,        on_F2_Ep3,        nullptr,        nullptr},
 /* F3 */ {nullptr, nullptr, nullptr,        nullptr,        nullptr,        nullptr,        nullptr,     nullptr,     nullptr,        nullptr,        nullptr,        nullptr,        nullptr,        nullptr},
 /* F4 */ {nullptr, nullptr, nullptr,        nullptr,        nullptr,        nullptr,        nullptr,     nullptr,     nullptr,        nullptr,        nullptr,        nullptr,        nullptr,        nullptr},
 /* F5 */ {nullptr, nullptr, nullptr,        nullptr,        nullptr,        nullptr,        nullptr,     nullptr,     nullptr,        nullptr,        nullptr,        nullptr,        nullptr,        nullptr},

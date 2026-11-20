@@ -34,7 +34,7 @@
   // Address to connect external clients to (IP address or interface name). This is the address that newserv will
   // expect clients not on the same network as the server to connect to. If you're running newserv behind a NAT (this
   // applies to most home networks), this should be your router's public-facing IP address.
-  "ExternalAddress": "10.0.1.5",
+  "ExternalAddress": "127.0.0.1",
 
   // Port to listen for DNS queries on. To disable the DNS server, comment this out or set it to zero. By default, the
   // DNS server listens on all interfaces, but you can specify an interface by replacing this with a list of
@@ -164,6 +164,17 @@
   // Statistics window of the admin program (docs/TEASERV_ADMIN_GUI.md). The default is 60; 0 turns recording off.
   // Read once at startup.
   // "TeaservStatsInterval": 60,
+
+  // Teaserv: built-in download server for Caelum modpacks (docs/CAELUM_MODPACKS.md), for servers without another web
+  // host. When enabled, the server sends each ZIP file in system/caelum-modpacks as
+  // http://<address>:<port>/modpacks/<file name> (GET and HEAD only; nothing else is served). Off by default. The
+  // port defaults to 80; choose another one if that port is in use. Both are read once at startup. Teaserv Admin
+  // writes the matching addresses into system/caelum-modpacks.txt, using TeaservModpackHTTPAddress (a host name or
+  // IPv4 address players reach this server at), or ExternalAddress when that is empty. The server itself does not
+  // read TeaservModpackHTTPAddress.
+  // "TeaservModpackHTTPEnabled": false,
+  // "TeaservModpackHTTPPort": 80,
+  // "TeaservModpackHTTPAddress": "",
 
   // Specify which kinds of logging you want to be enabled. This allows you to make the terminal more or less noisy
   // when players are connected, so you can see only the log messages you care about. The log levels are, in decreasing
@@ -336,6 +347,28 @@
     "none", // Lobby C4 (Episode 3 only)
     "none", // Lobby C5 (Episode 3 only)
   ],
+
+  // Caelum voice chat (docs/CAELUM_VOICE.md). Caelum players in the same lobby or battle room talk to each other
+  // directly (peer to peer); this server only introduces them to each other and never carries voice. Spectators of a
+  // battle can listen but not speak. Stock clients are never sent anything.
+  //   Enabled: false turns voice chat off on this server.
+  //   QuietLobbies: lobby numbers (as in LobbyEvents: 1 = Lobby 1) where voice chat is off.
+  //   TurnEnabled / TurnPort: the built-in relay (TURN, UDP) for players whose routers block direct connections.
+  //     It forwards encrypted voice packets it cannot read. Open/forward this UDP port (and the relay ports below)
+  //     in your firewall/router. TurnRelayPortBegin/End limit the relay to a port range (0 = any port).
+  //   TurnCredentialHours: how long a player's relay password stays valid (new ones are issued at each login).
+  //   StunServers: extra address-discovery servers ("host:port"); the relay already answers these requests.
+  "CaelumVoice": {
+    "Enabled": true,
+    "QuietLobbies": [],
+    "TurnEnabled": true,
+    "TurnPort": 3478,
+    "TurnRelayPortBegin": 0,
+    "TurnRelayPortEnd": 0,
+    "TurnCredentialHours": 12,
+    "TurnMaxAllocations": 1000,
+    "StunServers": [],
+  },
   // Menu event. This is the holiday event the player sees at the main menu.
   "MenuEvent": "none",
 

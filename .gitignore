@@ -71,3 +71,19 @@ system/players
 system/quests/includes
 system/quests/private
 .vscode
+
+# Local, machine-specific files that must not be shared
+teaserv-admin-settings.json
+teaserv-admin-settings.json.tmp
+CMakeUserPresets.json
+/out/
+cmake-build-*/
+release.tar.gz
+*.log
+*.pyc
+.pytest_cache/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini

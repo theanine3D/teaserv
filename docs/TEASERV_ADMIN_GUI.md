@@ -32,7 +32,13 @@ it finds none, it opens **Settings > Admin program**, where you choose the folde
 | `--start` | Start the server right away |
 | `--show` | Open the status window at start |
 | `--no-tray` | Do not use the tray; show the status window instead |
-| `--settings FILE` | Keep the program's own settings in this file (default: `%APPDATA%\TeaservAdmin\settings.json`, on Linux `~/.config/teaserv-admin/settings.json`) |
+| `--settings FILE` | Keep the program's own settings in this file (default: `teaserv-admin-settings.json` beside this installation on Windows and Linux; `--server-dir` uses that folder) |
+
+Preferences are local to each installation. Packaged applications use the executable's folder; running from source
+uses the server checkout root. Launching from another working directory does not select another installation's
+preferences. `--server-dir FOLDER` uses that folder's preferences unless `--settings FILE` is also supplied.
+The old shared user-profile settings file is ignored, so deleted or different installations cannot supply stale paths.
+The installation folder must be writable to save preferences; there is no fallback to shared user-profile settings.
 
 Only one copy of the program runs per settings file.
 
@@ -55,6 +61,7 @@ The icon is a disc with a T. Its colour shows the server state, and the tooltip 
 
 Right-click the icon for the menu: **Start**, **Stop**, **Restart the server**, **View console**, **Settings**,
 **Logs**, **Statistics**, **Quit**. A left click opens the small status window with the same actions as buttons.
+Its **Always On Top** box (right of Restart) keeps that window above all other windows; the choice is remembered.
 
 ## Start, stop and restart
 
@@ -100,17 +107,43 @@ events, Episode 3, Games, Logging, Statistics. Each field has a short explanatio
   `system/config.json`. Backups are never deleted by the program.
 - **Restart or not.** After saving, the window says which changes can be applied at once and which need a restart,
   and offers a button for each: **Apply now (no restart)** sends `reload config`; **Restart the server now** restarts.
-  Fields that need a restart are marked "needs a server restart": the game, DNS and other listening ports, and the
-  statistics interval. The status window keeps a note of saved settings that still wait for a restart.
+  Fields that need a restart are marked "needs a server restart": the game, DNS and other listening ports, the
+  statistics interval and the welcome message (a changed message reached players only after a restart). The status window keeps a note of saved settings that still wait for a restart.
 - **Episode 3 lobby media** edits the pictures, models and animations of the Episode 3 card lobby: the
   `Episode3LobbyBanners` list in `config.json` and its files in `system/ep3/banners/`. See "Episode 3 lobby media"
   below.
 - **Caelum lobbies** edits `system/caelum-lobbies.txt` (extra card lobbies 20 to 63) as a list of names. Needs a
   restart.
-- **Caelum modpacks** edits `system/caelum-modpacks.txt` (the mod list players must have): name, download address
-  and SHA-256 for each pack, with a button that takes the SHA-256 from a ZIP file. The list is used for players who
-  log in after saving. See [Caelum modpacks](CAELUM_MODPACKS.md) for server modpacks and card mods; the key and
-  identity files are not edited here.
+- **Caelum modpacks** finds plain and encrypted modpack ZIPs in `system/caelum-modpacks/` automatically.
+  This empty folder is created by fresh builds and included in release archives. The page shows its full path and
+  an **Open Folder** button. Names come from each ZIP's root `mod.txt`; SHA-256 hashes are calculated from the
+  local ZIP bytes. Only **Download address** is editable. **Refresh** rescans the folder and rehashes every ZIP
+  without freezing the window. URLs stay with the same filename when a pack is rebuilt; existing manual listings
+  and renamed files are matched by hash, then by an unambiguous name where possible. Existing pack order is kept;
+  newly found ZIPs are appended in filename order. Remove a ZIP from the folder and Refresh to remove its listing.
+  **Save** writes `system/caelum-modpacks.txt`; upload the exact same ZIP to each download address. Invalid ZIPs,
+  duplicate copies and missing URLs are reported before saving. Filename/URL associations are saved beside the
+  manifest in `system/caelum-modpacks-admin.json`, so they survive reopening Admin even if a ZIP has changed.
+  The manifest is used for new logins. Restart the server after changing packs that add or modify cards.
+  See [Caelum modpacks](CAELUM_MODPACKS.md); server key and identity files remain separate.
+  **Copy Public Key** (beside Open Folder; its tooltip explains it) copies this server's Caelum identity public key,
+  the key modpack creators enter as "Server keys" in the Caelum Modkit to build encrypted server modpacks. It is
+  calculated from `system/caelum-server-identity.key` with the server's own method (Monocypher EdDSA with BLAKE2b,
+  repeated in `caelum_identity.py` and checked against Monocypher), so the server need not be running. Without that
+  file (the server makes it on its first start) the page says so.
+  Encrypted server modpacks get a **Server pack key** field (characters hidden unless **Show** is ticked). Paste the
+  key or the whole key line from the Caelum Modkit (Build Modpack → Copy Key Line). A line below says at once whether
+  the key opens the pack and whether the pack was made for this server's public key. **Save** writes
+  `system/caelum-server-keys.txt` (one `<pack id> <pack key> <name>` line per pack; other lines and comments stay;
+  the previous file is kept in the backups folder) and refuses while an encrypted pack has no working key. The server
+  reads the file again at every Caelum login, so no restart is needed.
+  The **Built-in download server** box at the top of this page (`TeaservModpackHTTPEnabled`,
+  `TeaservModpackHTTPPort`, `TeaservModpackHTTPAddress` in `config.json`; off by default) lets Teaserv serve the
+  ZIPs itself. While it is on, the page fills in every download address as
+  `http://<address>[:<port>]/modpacks/<file name>`, greys the address fields out and says why. The address is the
+  box's own value, else the External address (Network), which must then be an IPv4 address; Save refuses
+  otherwise. Typed addresses are kept in `caelum-modpacks-admin.json` and return when the box is turned off. Turning
+  the server on or changing its port needs a server restart.
 - **Other settings** is the fallback for every key that has no field: choose a key and edit its text exactly as it is
   in the file (for example `PortConfiguration`, the proxy destinations, quest and item tables, the `Extensions`
   group). The text is checked for mistakes before it is saved. A button opens `config.json` in your text editor.
@@ -241,6 +274,9 @@ These are the only changes to the server (details in the [integration map](EXTEN
   interval to `system/stats/`; adds the shell command `stats`, which prints the current numbers as one line of JSON
   starting with `TEASERV-STATS`.
 - `TeaservStatsInterval` in `config.json` (optional, default 60 seconds, 0 turns the files off).
+- `src/TeaservModpackHttp.hh/.cc`: the optional built-in download server for Caelum modpacks
+  (`TeaservModpackHTTPEnabled`, default off; `TeaservModpackHTTPPort`, default 80), started and stopped by
+  `teaserv_stats::start` / `stop`, so it adds no call site to upstream code.
 - A last save of every connected Blue Burst player when the server shuts down normally (see "Start, stop and
   restart").
 
@@ -257,7 +293,7 @@ program says so.
 | `system/config.json`, `system/caelum-lobbies.txt`, `system/caelum-modpacks.txt` | Only when you press Save |
 | `system/ep3/banners/` | Lobby media files you chose on the Episode 3 lobby media page, when you press Save |
 | `system/stats/YYYY-MM.jsonl` | Written by the server, read by the Statistics window |
-| `%APPDATA%\TeaservAdmin\settings.json` (Linux: `~/.config/teaserv-admin/settings.json`) | The program's own settings |
+| `teaserv-admin-settings.json` beside this installation | The program's own settings |
 
 ## For developers
 

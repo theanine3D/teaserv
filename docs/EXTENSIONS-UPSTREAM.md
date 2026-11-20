@@ -8,7 +8,7 @@ After the owner has made an upstream candidate available locally, run from the T
 python tools/extensions/AuditUpstream.py --candidate upstream/master
 ```
 
-Use `--git 'C:\Program Files\Git\cmd\git.exe'` if Git is not on PATH. `--repository` selects another checkout; the default is this script's checkout. `--format json` produces a machine-readable report. Output goes to stdout; redirect it to a new file under ignored `build/` when retaining evidence. The tool does not create an output file itself.
+Use `--git '<path to git.exe>'` if Git is not on PATH. `--repository` selects another checkout; the default is this script's checkout. `--format json` produces a machine-readable report. Output goes to stdout; redirect it to a new file under ignored `build/` when retaining evidence. The tool does not create an output file itself.
 
 For a local smoke check without an available newer upstream ref, use the recorded baseline as `--candidate`. This should report zero upstream changes while still describing local watched edits. It does not demonstrate that a real upstream update has integrated successfully.
 

@@ -45,6 +45,7 @@ std::shared_ptr<ServerState> ServerState::create_shared(std::shared_ptr<DataInde
     s->thread_pool = std::make_shared<asio::thread_pool>();
   }
   s->is_replay = is_replay;
+  s->caelum_voice_start_relay();
   s->load_accounts();
   s->load_ep3_tournament_state();
   s->create_default_lobbies();
@@ -133,6 +134,7 @@ void ServerState::add_client_to_available_lobby(std::shared_ptr<Client> c, bool 
     this->extensions->lobby_event("lobby_join", c, added_to_lobby);
   }
 #endif
+  this->caelum_voice_room_changed(added_to_lobby);
 }
 
 void ServerState::remove_client_from_lobby(std::shared_ptr<Client> c) {
@@ -145,6 +147,7 @@ void ServerState::remove_client_from_lobby(std::shared_ptr<Client> c) {
 #endif
     uint8_t old_client_id = c->lobby_client_id;
     l->remove_client(c);
+    this->caelum_voice_room_changed(l);
     this->on_player_left_lobby(l, old_client_id);
   }
 }
@@ -178,6 +181,10 @@ bool ServerState::change_client_lobby(
     this->extensions->lobby_event("lobby_join", c, new_lobby);
   }
 #endif
+  if (current_lobby) {
+    this->caelum_voice_room_changed(current_lobby);
+  }
+  this->caelum_voice_room_changed(new_lobby);
   return true;
 }
 

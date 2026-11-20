@@ -15,15 +15,33 @@ DEFAULTS = {
     "stop_timeout_seconds": 30,
     "log_keep_days": 30,
     "stats_poll_seconds": 5,
+    "status_always_on_top": False,  # the small status window stays above other windows
 }
 
 
-def default_settings_path():
-    if IS_WINDOWS:
-        base = os.environ.get("APPDATA") or os.path.expanduser("~")
-        return os.path.join(base, "TeaservAdmin", "settings.json")
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "teaserv-admin", "settings.json")
+def program_dir():
+    """The installed executable's folder, or the source launcher folder (never PyInstaller's temp folder)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def installation_dir():
+    """Source checkouts keep preferences in the server root; packaged apps keep them next to the executable."""
+    here = program_dir()
+    if not getattr(sys, "frozen", False):
+        candidate = here
+        for _ in range(4):
+            if is_server_dir(candidate):
+                return candidate
+            candidate = os.path.dirname(candidate)
+    return here
+
+
+def default_settings_path(server_dir=None):
+    # Deliberately do not read/migrate the old shared user-profile file: its paths can name another installation.
+    return os.path.join(os.path.abspath(server_dir) if server_dir else installation_dir(),
+                        "teaserv-admin-settings.json")
 
 
 def is_server_dir(path):
@@ -32,12 +50,13 @@ def is_server_dir(path):
 
 def guess_server_dir():
     """A folder with a system folder: next to this program, above it, or the current folder."""
-    here = os.path.dirname(os.path.abspath(sys.argv[0] if getattr(sys, "frozen", False) else __file__))
-    candidates = [os.getcwd(), here]
+    here = program_dir()
+    candidates = [installation_dir(), here]
     path = here
     for _ in range(4):
         path = os.path.dirname(path)
         candidates.append(path)
+    candidates.append(os.getcwd())
     for candidate in candidates:
         if is_server_dir(candidate) and (
                 os.path.isfile(os.path.join(candidate, EXE_NAME)) or
@@ -48,7 +67,7 @@ def guess_server_dir():
 
 class AppSettings:
     def __init__(self, path=None):
-        self.path = path or default_settings_path()
+        self.path = os.path.abspath(path or default_settings_path())
         self.values = dict(DEFAULTS)
         self.load()
 

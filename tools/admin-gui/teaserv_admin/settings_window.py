@@ -6,13 +6,15 @@ need a server restart.
 
 import datetime
 import os
+import queue
 import re
 import shutil
 import threading
+import zipfile
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import caelum_files, jsonc, lobby_media, server, ui
+from . import caelum_files, caelum_identity, caelum_serverpack, jsonc, lobby_media, server, ui
 from . import config_schema as schema
 from .field_editors import FieldEditor, WRAP
 
@@ -324,98 +326,432 @@ class LobbiesPanel(Panel):
 
 class ModpacksPanel(Panel):
     title = "Caelum modpacks"
-    intro = ("Modpacks every Caelum player must have to play on this server (file system/caelum-modpacks.txt). "
-             "Caelum offers to download each pack from its address and checks it against the SHA-256. The list is "
-             "used for players who log in after you save. Restart the server after changing packs that add cards: "
-             "it decides at start whether Caelum and original clients may share games (docs/CAELUM_MODPACKS.md).")
+    intro = ("Put the modpack ZIP files this server requires in system/caelum-modpacks. This page finds them "
+             "automatically, reads each name from mod.txt, and calculates its SHA-256 (the file's fingerprint). "
+             "Enter only the download address for each ZIP, or turn on the built-in download server below to let "
+             "Teaserv send the ZIPs itself. After adding, replacing or removing ZIPs, press Refresh, then Save. "
+             "Refresh keeps entered addresses when a filename stays the same. Upload the same ZIP to that address "
+             "when replacing a pack. Encrypted server modpacks also need their key (the Caelum Modkit shows it after "
+             "Build Modpack); Save writes the keys to system/caelum-server-keys.txt. Changes apply to new logins "
+             "after saving; restart the server when changing packs that add or change cards.")
 
     def __init__(self, window, parent):
         super().__init__(window, parent)
-        self.rows_frame = ttk.Frame(self.body)
-        self.rows_frame.pack(anchor="w", fill="x")
-        ttk.Button(self.body, text="Add a modpack", command=self.add).pack(anchor="w", pady=8)
+        # The built-in download server's settings (config.json), with the same editors as the topic pages
+        server_box = ttk.LabelFrame(self.body, text="Built-in download server", padding=8)
+        server_box.pack(fill="x", anchor="w", pady=(0, 10))
+        self.editors = []
+        for field in schema.MODPACK_DOWNLOAD_FIELDS:
+            editor = FieldEditor(server_box, field)
+            editor.frame.pack(fill="x", anchor="w")
+            self.editors.append(editor)
+        self.enabled_editor, self.port_editor, self.address_editor = self.editors
+        self.enabled_editor.flag.trace_add("write", lambda *args: self.update_addresses())
+        self.port_editor.var.trace_add("write", lambda *args: self.update_addresses())
+        self.address_editor.var.trace_add("write", lambda *args: self.update_addresses())
+        external = self.external_editor()
+        if external is not None:
+            external.var.trace_add("write", lambda *args: self.update_addresses())
+        self.auto_note = ttk.Label(self.body, text="", style="Warn.TLabel", wraplength=WRAP, justify="left")
+        self.auto_note.pack(anchor="w", pady=(0, 8))
+        self.auto_problem = ""
+        self._local_addresses = None  # this PC's IPv4 addresses, looked up once when first needed
+        self.manual_urls = {}  # filename -> address entered by hand; kept while the download server is on
+        self.url_entries = []
+        self.folder_label = ttk.Label(self.body, text="", style="Help.TLabel", wraplength=WRAP, justify="left")
+        self.folder_label.pack(anchor="w", pady=(0, 8))
+        self.rows_frame = ttk.Frame(self.body); self.rows_frame.pack(anchor="w", fill="x")
+        buttons = ttk.Frame(self.body); buttons.pack(anchor="w", pady=8)
+        self.refresh_button = ttk.Button(buttons, text="Refresh", command=self.refresh)
+        self.refresh_button.pack(side="left")
+        ttk.Button(buttons, text="Open Folder", command=self.open_folder).pack(side="left", padx=8)
+        self.key_button = ttk.Button(buttons, text="Copy Public Key", command=self.copy_public_key)
+        self.key_button.pack(side="left")
+        self.key_tooltip = ui.Tooltip(self.key_button,
+                   "Copies this server's Caelum identity public key (64 characters) to the clipboard. Paste it into "
+                   "the \"Server keys\" of a modpack's Pack Settings in the Caelum Modkit before building it: an "
+                   "encrypted (server) modpack then opens only for players connected to this server. The key is "
+                   "public and safe to share; its secret part stays in system/caelum-server-identity.key, which you "
+                   "should back up and never share.")
+        self.progress = ttk.Label(self.body, text="", style="Help.TLabel", wraplength=WRAP)
+        self.progress.pack(anchor="w")
         self.error = ttk.Label(self.body, text="", style="Error.TLabel", wraplength=WRAP, justify="left")
         self.error.pack(anchor="w")
-        self.rows = []
-        self.original = []
-        self.text = ""
-        self.exists = False
-        self.broken = False
+        self.warning = ttk.Label(self.body, text="", style="Help.TLabel", wraplength=WRAP, justify="left")
+        self.warning.pack(anchor="w")
+        self.rows, self.filenames, self.original, self.saved_sources = [], [], [], []
+        self.text = self.sources_text = ""
+        self.broken = self.refreshing = False
+        self.scan_error = ""
+        self.stamp = None
+        self._scan_token = 0; self._poll_id = None
+        self.body.bind("<Destroy>", lambda e: self.cancel_poll() if e.widget is self.body else None, add="+")
 
     @property
     def path(self):
         return os.path.join(self.window.app.settings.system_dir, MODPACKS_FILE)
 
+    @property
+    def folder(self):
+        return os.path.join(self.window.app.settings.system_dir, "caelum-modpacks")
+
+    @property
+    def sources_path(self):
+        return os.path.join(self.window.app.settings.system_dir, caelum_files.MODPACK_SOURCES_FILE)
+
+    def cancel_poll(self):
+        self._scan_token += 1
+        if self._poll_id is not None:
+            try: self.window.after_cancel(self._poll_id)
+            except tk.TclError: pass
+            self._poll_id = None
+        self.refreshing = False
+        # Release Tk variables on the UI thread, including when this panel is destroyed during a scan.
+        self.rows.clear(); self.filenames.clear()
+
+    # ----- the built-in download server
+
+    def external_editor(self):
+        """The External address field of the Network page, whose value the addresses use when ours is empty."""
+        for panel in getattr(self.window, "panels", ()):
+            if isinstance(panel, FormPanel):
+                for editor in panel.editors:
+                    if editor.field.path == ("ExternalAddress",):
+                        return editor
+        return None
+
+    def external_address(self):
+        editor = self.external_editor()
+        if editor is not None and not editor.raw:
+            return editor.var.get().strip()
+        root = getattr(self.window, "config_root", None)
+        node = jsonc.find(root, ("ExternalAddress",)) if root is not None else None
+        value = node.to_python() if node is not None else None
+        return value.strip() if isinstance(value, str) else ""
+
+    def download_settings(self):
+        """(on, host, port, problem) as the fields above say now, saved or not."""
+        if getattr(self.window, "config_root", None) is None or self.enabled_editor.raw or not self.enabled_editor.flag.get():
+            return False, None, None, ""
+        try:
+            present, port = self.port_editor.read()
+        except ValueError as error:
+            return True, None, None, "Download server port: %s" % error
+        if not present:
+            port = caelum_files.DEFAULT_DOWNLOAD_PORT
+        try:
+            present, host = self.address_editor.read()
+        except ValueError as error:
+            return True, None, None, "Address players download from: %s" % error
+        if not present or not host.strip():
+            host = self.external_address()
+            if not caelum_files.is_ipv4(host):
+                return True, None, None, (
+                    "Enter the address players download from: the External address under Network (%s) is not an "
+                    "IPv4 address, so it cannot be used in download addresses." % (host or "empty"))
+        return True, host.strip(), port, ""
+
+    def update_addresses(self):
+        """With the download server on, every address is made from its address and port and cannot be edited.
+        Turning it off brings back the addresses entered by hand."""
+        on, host, port, problem = self.download_settings()
+        for filename, (_, _, url), entry in zip(self.filenames, self.rows, self.url_entries):
+            if on:
+                generated = ""
+                if not problem:
+                    try:
+                        generated = caelum_files.download_url(host, port, filename)
+                    except ValueError as error:
+                        problem = str(error)
+                url.set(generated)
+                entry.configure(state="readonly")
+            else:
+                url.set(self.manual_urls.get(filename, ""))
+                entry.configure(state="normal")
+        self.auto_problem = problem if on else ""
+        if not on:
+            self.auto_note.configure(text="", style="Warn.TLabel")
+            self.auto_note.pack_forget()
+            return
+        if problem:
+            text = "The built-in download server is on, but the download addresses cannot be made: " + problem
+            style = "Error.TLabel"
+        else:
+            text = ("The built-in download server is on, so every download address below is made automatically "
+                    "(http://%s%s/modpacks/<file name>) and cannot be edited here. Players must be able to reach "
+                    "this address and port. Saving puts these addresses in the mod list."
+                    % (host, "" if port == 80 else ":%d" % port))
+            style = "Warn.TLabel"
+            if self._local_addresses is None:
+                self._local_addresses = caelum_files.local_ipv4_addresses()
+            warning = caelum_files.download_host_warning(host, self._local_addresses)
+            if warning:
+                text += "\n" + warning
+                # 127.0.0.1 (the example External address) is fine for trying things on this PC: a note, not an error
+                style = "Warn.TLabel" if host.startswith("127.") else "Error.TLabel"
+        self.auto_note.configure(text=text, style=style)
+        self.auto_note.pack(anchor="w", pady=(0, 8), before=self.folder_label)
+
     def load(self):
+        self.cancel_poll()
+        root = getattr(self.window, "config_root", None)
+        for editor in self.editors:
+            editor.load(jsonc.find(root, editor.field.path) if root is not None else None)
+            for widget in editor.body.winfo_children():
+                try:
+                    widget.configure(state="normal" if root is not None else "disabled")
+                except tk.TclError:
+                    pass
         self.text, self.exists = read_text(self.path)
-        self.broken = False
-        self.error.configure(text="")
-        packs = []
+        self.original = []; self.broken = False; warnings = []
         if self.exists:
-            try:
-                packs = caelum_files.parse_modpacks(self.text)
-            except ValueError as e:
+            try: self.original = caelum_files.parse_modpacks(self.text)
+            except ValueError as error:
                 self.broken = True
-                self.error.configure(text="The file has a problem and is shown empty: %s Saving this page replaces "
-                                     "it (a backup copy is kept)." % e)
-        self.original = [tuple(p) for p in packs]
-        self.rebuild(self.original)
+                warnings.append("The existing modpack list has a problem: %s Saving replaces it; a backup is kept." % error)
+        self.sources_text, _ = read_text(self.sources_path)
+        self.saved_sources = []
+        if self.sources_text:
+            try: self.saved_sources = caelum_files.parse_modpack_sources(self.sources_text)
+            except (ValueError, TypeError, AttributeError) as error:
+                warnings.append("Saved filename links could not be read. Addresses will be matched against the existing modpack list. %s" % error)
+        # Keys of encrypted server modpacks (system/caelum-server-keys.txt, read by the server at every Caelum login)
+        self.keys_text, self.keys_exist = "", False
+        self.saved_keys = {}
+        system_dir = self.window.app.settings.system_dir
+        if system_dir and os.path.isdir(system_dir):
+            self.keys_text, self.keys_exist = caelum_serverpack.read_keys_file(system_dir)
+            self.saved_keys = caelum_serverpack.parse_keys_file(self.keys_text)
+        self.server_rows = {}
+        self.warning.configure(text="\n".join(warnings))
+        self.folder_label.configure(text="Local ZIP folder: " + self.folder)
+        self.rebuild([])
+        self.refresh()
+
+    # ----- encrypted server modpacks: each needs its key in system/caelum-server-keys.txt
+
+    def own_public_key(self):
+        try:
+            return caelum_identity.public_key_hex(self.window.app.settings.system_dir)
+        except (OSError, ValueError):
+            return None
+
+    def add_server_key_row(self, box, filename, start_row, typed):
+        """For an encrypted pack: its key field (hidden characters unless Show is ticked) and a line saying whether
+        the key opens the pack and whether the pack was made for this server."""
+        try:
+            header = caelum_serverpack.read_header(os.path.join(self.folder, filename))
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            ttk.Label(box, text="Cannot read the server modpack header: %s" % error, style="Error.TLabel",
+                      wraplength=WRAP - 120, justify="left").grid(row=start_row, column=0, columnspan=2, sticky="w")
+            return
+        if header is None:
+            return
+        pack_id, servers = header
+        key_var = tk.StringVar(value=typed if typed is not None else
+                               (self.saved_keys[pack_id].hex() if pack_id in self.saved_keys else ""))
+        ttk.Label(box, text="Server pack key").grid(row=start_row, column=0, sticky="w", padx=(0, 8), pady=2)
+        line = ttk.Frame(box); line.grid(row=start_row, column=1, sticky="ew", pady=2)
+        entry = ttk.Entry(line, textvariable=key_var, width=70, show="•"); entry.pack(side="left", fill="x", expand=True)
+        shown = tk.BooleanVar(value=False)
+        ttk.Checkbutton(line, text="Show", variable=shown,
+                        command=lambda: entry.configure(show="" if shown.get() else "•")).pack(side="left", padx=(6, 0))
+        status = ttk.Label(box, text="", wraplength=WRAP - 120, justify="left")
+        status.grid(row=start_row + 1, column=1, sticky="w")
+        row = {"pack_id": pack_id, "servers": servers, "key_var": key_var, "entry": entry, "status": status,
+               "shown": shown, "key": None, "problem": "", "hint": ""}
+        self.server_rows[filename] = row
+        key_var.trace_add("write", lambda *args: self.check_server_key(filename))
+        self.check_server_key(filename)
+
+    def check_server_key(self, filename):
+        row = self.server_rows.get(filename)
+        if row is None:
+            return
+        row["key"], row["problem"], row["hint"] = None, "", ""
+        text = row["key_var"].get()
+        own = self.own_public_key()
+        if own is None:
+            row["hint"] = ("This server has no Caelum identity yet (the server makes it on its first start), so it cannot "
+                           "be checked whether this pack was made for it.")
+        elif own not in row["servers"]:
+            row["hint"] = ("This pack was not made for this server: its list of servers does not have this server's "
+                           "public key (Copy Public Key). Caelum will not open it here; build it again with this "
+                           "server's key in the Modkit's Pack Settings > Server keys.")
+        if not text.strip():
+            row["problem"] = ("Encrypted server modpack (pack id %s). Enter its key: in the Caelum Modkit, Build Modpack "
+                              "shows it (Copy Key Line); the key line can be pasted here as it is." % row["pack_id"].hex())
+        else:
+            try:
+                key = caelum_serverpack.parse_key_entry(text, row["pack_id"])
+                if caelum_serverpack.key_opens(os.path.join(self.folder, filename), row["pack_id"], key):
+                    row["key"] = key
+                else:
+                    row["problem"] = "This key does not open this pack. Copy the key line again from the Modkit project that built it."
+            except (OSError, ValueError, zipfile.BadZipFile) as error:
+                row["problem"] = str(error)
+        if row["problem"]:
+            row["status"].configure(text=row["problem"] + ("\n" + row["hint"] if row["hint"] else ""), style="Error.TLabel")
+        elif row["hint"]:
+            row["status"].configure(text="The key opens this pack.\n" + row["hint"], style="Warn.TLabel")
+        else:
+            row["status"].configure(text="The key opens this pack, and the pack was made for this server.",
+                                    style="Help.TLabel")
+
+    def server_key_entries(self):
+        """[(pack id, key, mod.txt name)] for the keys file; raises ValueError naming the first pack without a working key."""
+        entries = []
+        for filename, (_, name, _) in zip(self.filenames, self.rows):
+            row = self.server_rows.get(filename)
+            if row is None:
+                continue
+            self.check_server_key(filename)
+            if row["key"] is None:
+                raise ValueError("%s: %s" % (filename, row["problem"]))
+            entries.append((row["pack_id"], row["key"], name.get().strip()))
+        return entries
 
     def rebuild(self, packs):
-        for child in self.rows_frame.winfo_children():
-            child.destroy()
-        self.rows = []
+        typed_keys = {f: row["key_var"].get() for f, row in getattr(self, "server_rows", {}).items()}
+        self.server_rows = {}
+        for child in self.rows_frame.winfo_children(): child.destroy()
+        self.rows = []; self.filenames = []; self.url_entries = []
+        self.manual_urls = {filename: url for filename, _, _, url in packs}
         if not packs:
-            ttk.Label(self.rows_frame, text="No modpacks are required.", style="Help.TLabel").pack(anchor="w")
-        for number, (sha256, name, url) in enumerate(packs):
-            box = ttk.LabelFrame(self.rows_frame, text="Pack %d" % (number + 1), padding=8)
-            box.pack(fill="x", anchor="w", pady=(0, 8))
+            ttk.Label(self.rows_frame, text="No ZIP modpacks found. Add ZIP files to the folder above, then press Refresh.",
+                      style="Help.TLabel", wraplength=WRAP, justify="left").pack(anchor="w")
+        for filename, sha256, name, url in packs:
+            box = ttk.LabelFrame(self.rows_frame, text=filename, padding=8); box.pack(fill="x", anchor="w", pady=(0, 8))
+            box.columnconfigure(1, weight=1)
             variables = (tk.StringVar(value=sha256), tk.StringVar(value=name), tk.StringVar(value=url))
-            for row, (label, var, width) in enumerate((("Name", variables[1], 50),
-                                                        ("Download address", variables[2], 70),
-                                                        ("SHA-256", variables[0], 70))):
+            for row, (label, var, width, editable) in enumerate((("Name", variables[1], 50, False),
+                    ("Download address", variables[2], 70, True), ("SHA-256", variables[0], 70, False))):
                 ttk.Label(box, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
-                ttk.Entry(box, textvariable=var, width=width).grid(row=row, column=1, sticky="w", pady=2)
-            buttons = ttk.Frame(box)
-            buttons.grid(row=3, column=1, sticky="w", pady=(4, 0))
-            ttk.Button(buttons, text="Take SHA-256 from a ZIP file...",
-                       command=lambda v=variables[0]: self.pick_hash(v)).pack(side="left")
-            ttk.Button(buttons, text="Remove this pack",
-                       command=lambda n=number: self.remove(n)).pack(side="left", padx=8)
-            self.rows.append(variables)
+                entry = ttk.Entry(box, textvariable=var, width=width, state="normal" if editable else "readonly")
+                entry.grid(row=row, column=1, sticky="ew", pady=2)
+                if editable:
+                    self.url_entries.append(entry)
+            # Addresses typed by hand are remembered apart from the generated ones shown while the server is on
+            variables[2].trace_add("write", lambda *args, f=filename, v=variables[2]: self.typed_url(f, v))
+            self.rows.append(variables); self.filenames.append(filename)
+            self.add_server_key_row(box, filename, 3, typed_keys.get(filename))
+        self.update_addresses()
+
+    def typed_url(self, filename, var):
+        if not self.download_settings()[0]:
+            self.manual_urls[filename] = var.get()
 
     def packs(self):
         return [(sha.get().strip().lower(), name.get().strip(), url.get().strip()) for sha, name, url in self.rows]
 
-    def add(self):
-        self.rebuild(self.packs() + [("", "", "")])
+    def local_packs(self):
+        """With the hand-entered addresses, also while the download server shows generated ones."""
+        return [(filename, sha, name, self.manual_urls.get(filename, "").strip())
+                for filename, (sha, name, _) in zip(self.filenames, self.packs())]
 
-    def remove(self, number):
-        packs = self.packs()
-        del packs[number]
-        self.rebuild(packs)
+    def open_folder(self):
+        try:
+            if not os.path.isdir(self.window.app.settings.system_dir):
+                raise OSError("Choose a Teaserv server folder under Admin program first.")
+            os.makedirs(self.folder, exist_ok=True)
+        except OSError as error:
+            self.error.configure(text="Cannot open the folder: %s" % error); return
+        self.window.app.open_path(self.folder)
 
-    def pick_hash(self, var):
-        path = filedialog.askopenfilename(parent=self.window, title="Choose the modpack ZIP file",
-                                          filetypes=[("ZIP files", "*.zip"), ("All files", "*.*")])
-        if path:
+    def copy_public_key(self):
+        """Copy the server identity's public key (caelum_identity.py repeats the server's calculation)."""
+        system_dir = self.window.app.settings.system_dir
+        try:
+            if not system_dir or not os.path.isdir(system_dir):
+                raise OSError("Choose a Teaserv server folder under Admin program first.")
+            key = caelum_identity.public_key_hex(system_dir)
+        except FileNotFoundError:
+            self.error.configure(text="This server has no Caelum identity yet. The server creates "
+                                      "system/caelum-server-identity.key the first time it starts: start it once, "
+                                      "then press Copy Public Key again.")
+            return
+        except (OSError, ValueError) as error:
+            self.error.configure(text="Cannot read the server identity: %s" % error)
+            return
+        self.window.clipboard_clear()
+        self.window.clipboard_append(key)
+        self.error.configure(text="")
+        self.progress.configure(text="Copied the server's public key: %s" % key)
+
+    def refresh(self):
+        if self.refreshing: return
+        previous = self.local_packs() or self.saved_sources
+        folder = self.folder; manifest = list(self.original)
+        self.refreshing = True; self.scan_error = ""
+        self.error.configure(text=""); self.progress.configure(text="Reading local modpacks and calculating SHA-256 hashes…")
+        self.refresh_button.state(["disabled"])
+        self._scan_token += 1; token = self._scan_token
+        result = queue.Queue()
+        def work():
             try:
-                var.set(caelum_files.sha256_of_file(path))
-            except OSError as e:
-                self.error.configure(text="Cannot read the file: %s" % e)
+                if not os.path.isdir(os.path.dirname(folder)):
+                    raise OSError("Choose a Teaserv server folder with a system folder under Admin program first.")
+                os.makedirs(folder, exist_ok=True)
+                result.put((caelum_files.scan_local_modpacks(folder, previous, manifest), ""))
+            except Exception as error:
+                result.put((None, str(error)))
+        def poll():
+            self._poll_id = None
+            if token != self._scan_token: return
+            try: value, error = result.get_nowait()
+            except queue.Empty:
+                self._poll_id = self.window.after(50, poll); return
+            self.refreshing = False; self.refresh_button.state(["!disabled"])
+            self.progress.configure(text="")
+            if error:
+                self.scan_error = error; self.error.configure(text="Refresh failed: " + error); return
+            packs, self.stamp = value
+            # Edits made while the worker was hashing must not be overwritten by its older snapshot.
+            urls = {p[0]: p[3] for p in self.local_packs()}
+            packs = [(f, sha, name, urls.get(f, url)) for f, sha, name, url in packs]
+            self.rebuild(packs)
+            self.progress.configure(text="Found %d modpack(s). Enter any missing download addresses, then Save." % len(packs))
+        threading.Thread(target=work, daemon=True).start()
+        self._poll_id = self.window.after(50, poll)
 
     def collect(self, changes):
-        packs = self.packs()
-        if packs == self.original and not (self.broken and packs):
+        if getattr(self.window, "config_root", None) is not None:
+            FormPanel.collect(self, changes)  # the download server's config.json settings
+        # Allow Admin program settings to repair a missing/unselected installation. Do not create one in cwd.
+        if not os.path.isdir(self.window.app.settings.system_dir):
             return
-        newline = "\r\n" if "\r\n" in self.text else "\n"
+        if self.refreshing:
+            raise PanelError(self, "Please wait for the modpack hashes to finish, then Save again.")
+        if self.scan_error:
+            raise PanelError(self, "Fix the problem with the local modpack folder and press Refresh before saving. " + self.scan_error)
+        self.update_addresses()
+        if self.auto_problem:
+            self.error.configure(text=self.auto_problem)
+            raise PanelError(self, self.auto_problem)
         try:
+            key_entries = self.server_key_entries()
+        except ValueError as error:
+            self.error.configure(text=str(error)); raise PanelError(self, str(error))
+        if key_entries:
+            newline = "\r\n" if "\r\n" in self.keys_text else "\n"
+            keys_text = caelum_serverpack.update_keys_file(self.keys_text, key_entries, newline)
+            if keys_text != self.keys_text:
+                changes.files.append((os.path.join(self.window.app.settings.system_dir, caelum_serverpack.KEYS_FILE),
+                                      keys_text))
+                changes.names["login"].append("Caelum server modpack keys")
+        try:
+            if self.stamp != caelum_files.modpack_folder_stamp(self.folder):
+                raise ValueError("The local ZIP files have changed. Press Refresh before saving.")
+            packs = self.packs()
+            newline = "\r\n" if "\r\n" in self.text else "\n"
             text = caelum_files.format_modpacks(packs, newline)
-        except ValueError as e:
-            self.error.configure(text=str(e))
-            raise PanelError(self, str(e))
-        changes.files.append((self.path, text))
-        changes.names["login"].append("Caelum modpacks")
+        except (ValueError, OSError) as error:
+            self.error.configure(text=str(error)); raise PanelError(self, str(error))
+        if packs != self.original or self.broken:
+            changes.files.append((self.path, text)); changes.names["login"].append("Caelum modpacks")
+        local = self.local_packs()
+        if local != self.saved_sources:
+            changes.files.append((self.sources_path, caelum_files.format_modpack_sources(local)))
 
 
 class LobbyMediaPanel(Panel):
@@ -905,7 +1241,7 @@ class LobbyMediaPanel(Panel):
 
 class ProgramPanel(Panel):
     title = "Admin program"
-    intro = "Settings of this program (not of the server). They are kept in your user profile."
+    intro = "Settings of this program (not of the server). They are kept in teaserv-admin-settings.json beside this installation, unless --settings selects another file."
 
     FIELDS = [
         ("server_dir", "Server folder", "folder",

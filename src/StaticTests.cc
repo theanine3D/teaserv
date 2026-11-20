@@ -7,6 +7,8 @@
 #include "Episode3/Modpacks.hh"
 #include "Episode3/CaelumLobbies.hh"
 #include "Episode3/CaelumCardMods.hh"
+#include "CaelumVoice.hh"
+#include "TeaservModpackHttp.hh"
 #include "Episode3/Server.hh"
 #include "Episode3/RulerServer.hh"
 #include "Episode3/DataIndexes.hh"
@@ -89,6 +91,73 @@ void run_static_tests() {
   expect_eq(sega_decoder("plain ASCII"), "plain ASCII");
   expect_raises(std::runtime_error, [&] { sega_decoder("\xF0"); });
 
+  phosg::log_info_f("-- Caelum voice chat");
+  {
+    using namespace caelum::voice;
+    auto defaults = parse_config(nullptr);
+    expect(defaults.enabled && defaults.turn_enabled && defaults.quiet_lobbies.empty());
+    expect_eq(3478, defaults.turn_port);
+    auto json = phosg::JSON::parse(
+        "{\"Enabled\": true, \"QuietLobbies\": [3, 7], \"StunServers\": [\"stun.example.net:3478\"], "
+        "\"TurnPort\": 0, \"TurnCredentialHours\": 2}");
+    auto config = parse_config(&json);
+    expect(config.quiet_lobbies.count(3) && config.quiet_lobbies.count(7) && !config.quiet_lobbies.count(1));
+    expect_eq(1, config.stun_servers.size());
+    expect_eq(7200, config.credential_lifetime_seconds);
+    for (const char* bad : {"[]", "{\"QuietLobbies\": [0]}", "{\"TurnPort\": 70000}", "{\"TurnCredentialHours\": 0}",
+             "{\"StunServers\": [\"a b\"]}", "{\"TurnRelayPortBegin\": 5000}"}) {
+      auto j = phosg::JSON::parse(bad);
+      expect_raises(std::runtime_error, [&] { parse_config(&j); });
+    }
+    expect_eq("v=1\nself=42\nice=stun:h:1\nice=turn:h:1?transport=udp u p\n",
+        encode_config(42, {{"stun:h:1", "", ""}, {"turn:h:1?transport=udp", "u", "p"}}));
+    Room room{"G7", false, true, {{10, 'P', 0}, {20, 'S', 4}}};
+    expect_eq("v=1\nroom=G7\nquiet=0\nbattle=1\npeer=10 P 0\npeer=20 S 4\n", encode_roster(room));
+    Signal sig{0x01020304, 3, std::string("candidate:1 1 UDP 1 10.0.0.1 5000 typ host")};
+    auto wire = encode_signal(sig);
+    expect_eq(8 + sig.payload.size(), wire.size());
+    expect_eq(0x04, static_cast<uint8_t>(wire[0])); // little-endian peer
+    auto back = parse_signal(wire);
+    expect_eq(sig.peer, back.peer);
+    expect_eq(sig.kind, back.kind);
+    expect_eq(sig.payload, back.payload);
+    expect_raises(std::runtime_error, [&] { parse_signal("short"); });
+    std::string header(8, '\0');
+    header[0] = 1;
+    header[4] = 9; // unknown kind
+    expect_raises(std::runtime_error, [&] { parse_signal(header); });
+    header[4] = 1;
+    header[5] = 1; // reserved bytes must be zero
+    expect_raises(std::runtime_error, [&] { parse_signal(header); });
+    header[5] = 0;
+    expect_eq(1, parse_signal(header).peer);
+    expect_raises(std::runtime_error, [&] { parse_signal(header + std::string(MAX_SIGNAL_PAYLOAD + 1, 'x')); });
+    expect_raises(std::runtime_error, [&] { encode_signal({1, 1, std::string(MAX_SIGNAL_PAYLOAD + 1, 'x')}); });
+    // voice state: what a real Caelum client sends (padded to 4 bytes by the game's packet layer)
+    expect_eq(1, parse_state(std::string("\x01\0\0\0", 4)));
+    expect_eq(3, parse_state(std::string("\x03", 1)));
+    expect_raises(std::runtime_error, [&] { parse_state(""); });
+    expect_raises(std::runtime_error, [&] { parse_state(std::string("\x01\0\0\0\0", 5)); });
+    expect_raises(std::runtime_error, [&] { parse_state(std::string("\x01\x01\0\0", 4)); });
+    expect_raises(std::runtime_error, [&] { parse_state(std::string("\x04\0\0\0", 4)); });
+    RateLimiter limiter(20, 50);
+    size_t allowed = 0;
+    for (size_t z = 0; z < 100; z++) {
+      allowed += limiter.allow(1000000); // a burst within one instant
+    }
+    expect_eq(50, allowed);
+    expect(!limiter.allow(1000000 + 10000)); // 0.01 s later: 0.2 tokens
+    expect(limiter.allow(1000000 + 100000)); // 0.1 s later: 2 tokens
+    auto creds = make_credentials(1234567, 1000, 3600);
+    expect_eq("4600:1234567", creds.username);
+    expect_eq(32, creds.password.size());
+    expect(make_credentials(1, 0, 1).password != make_credentials(1, 0, 1).password);
+    // The relay really starts (TurnPort 0: any free port) and takes credentials.
+    TurnServer relay(config);
+    expect(relay.port() != 0);
+    relay.add_credentials(creds, 60);
+  }
+
   phosg::log_info_f("-- Caelum extra lobbies");
   {
     auto extras = caelum::lobbies::parse("# extra lobbies\r\n20 LOBBY-CARD06\n\n21\t  Second lobby  \n");
@@ -116,6 +185,23 @@ void run_static_tests() {
     expect(!caelum::lobbies::visible_to(Version::GC_EP3, false));
     expect(!caelum::lobbies::visible_to(Version::GC_EP3_NTE, true));
     expect(!caelum::lobbies::visible_to(Version::GC_V3, true));
+  }
+  phosg::log_info_f("-- Teaserv modpack download server: request targets");
+  {
+    using teaserv_modpack_http::filename_for_target;
+    expect_eq("Beach Lobby.zip", filename_for_target("/modpacks/Beach%20Lobby.zip").value());
+    expect_eq("pack.ZIP", filename_for_target("/modpacks/pack.ZIP?x=1").value());
+    expect_eq("a+b.zip", filename_for_target("/modpacks/a+b.zip").value());
+    expect_eq("\xC3\xA9t\xC3\xA9.zip", filename_for_target("/modpacks/%C3%A9t%C3%A9.zip").value());
+    for (const char* bad : {"/pack.zip", "/modpacks/", "/modpacks/pack.txt", "/modpacks/.zip", "/modpacks/.hidden.zip",
+             "/modpacks/../config.zip", "/modpacks/%2e%2e%2fconfig.zip", "/modpacks/sub/pack.zip",
+             "/modpacks/sub%2Fpack.zip", "/modpacks/sub%5Cpack.zip", "/modpacks/C:pack.zip", "/modpacks/a%00.zip",
+             "/modpacks/a%0A.zip", "/modpacks/a%zz.zip", "/modpacks/a%2.zip", "/modpacks/pack.zip%",
+             "/modpacks/x.zip.exe", "/Modpacks/pack.zip"}) {
+      expect(!filename_for_target(bad).has_value());
+    }
+    expect(filename_for_target("/modpacks/" + std::string(251, 'n') + ".zip").has_value());
+    expect(!filename_for_target("/modpacks/" + std::string(252, 'n') + ".zip").has_value());
   }
   phosg::log_info_f("-- Caelum server mod manifests");
   const std::string mod_hash(64,'a');

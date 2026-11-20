@@ -20,6 +20,7 @@
 #include "QuestScript.hh"
 #include "TeamIndex.hh"
 #include "Text.hh"
+#include "CaelumVoice.hh"
 
 extern const uint64_t CLIENT_CONFIG_MAGIC;
 
@@ -139,6 +140,8 @@ public:
   bool caelum_mod_capable = false;
   bool caelum_mod_pending = false;
   bool caelum_mod_ready = false;
+  bool caelum_voice_on = false;                 // F2 flag 0x11 bit 0: in its room's voice chat (CaelumVoice.hh)
+  caelum::voice::RateLimiter caelum_voice_rate; // F2 flag 0x13 signals
   std::shared_ptr<const Episode3::CardIndex> ep3_cards;
   std::shared_ptr<const caelum::cardmods::PackKeys> caelum_session_pack_keys;
   std::shared_ptr<const Episode3::CardIndex> ep3_card_catalog() const;

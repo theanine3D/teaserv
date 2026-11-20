@@ -61,6 +61,30 @@ add_custom_target(
 
 
 
+# Caelum voice chat: libjuice's TURN relay (src/CaelumVoice.cc, docs/CAELUM_VOICE.md). Fetched at configure time;
+# point FETCHCONTENT_SOURCE_DIR_LIBJUICE at a local checkout of the same commit to build offline.
+include(FetchContent)
+set(_teaserv_shared_libs ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+set(NO_TESTS ON CACHE BOOL "libjuice: no tests" FORCE)
+FetchContent_Declare(libjuice
+    GIT_REPOSITORY https://github.com/paullouisageneau/libjuice.git
+    GIT_TAG b89c792e3612faf2f12cf35bcc56857313a06be3)
+FetchContent_MakeAvailable(libjuice)
+set(BUILD_SHARED_LIBS ${_teaserv_shared_libs})
+# libjuice is third-party code: Teaserv's project-wide -Werror (add_compile_options above) must not apply to it. Both
+# of its targets are built by "all" (release builds), though Teaserv links only juice-static. GCC 14 warns about
+# its GetProcAddress cast (thread.h, -Wcast-function-type).
+foreach(_juice_target juice juice-static)
+    if(MSVC)
+        target_compile_options(${_juice_target} PRIVATE /WX-)
+    else()
+        target_compile_options(${_juice_target} PRIVATE -Wno-error)
+    endif()
+endforeach()
+
+
+
 # Executable definition
 
 set(SOURCES
@@ -89,6 +113,8 @@ set(SOURCES
     src/Episode3/AssistServer.cc
     src/Episode3/BattleRecord.cc
     src/Episode3/CaelumCardMods.cc
+    src/CaelumVoice.cc
+    src/CaelumVoiceServer.cc
     src/Episode3/monocypher/monocypher.c
     src/Episode3/Card.cc
     src/Episode3/CardSpecial.cc
@@ -149,6 +175,7 @@ set(SOURCES
     src/StaticTests.cc
     src/TeamIndex.cc
     src/TeaservStats.cc
+    src/TeaservModpackHttp.cc
     src/TekkerAdjustmentSet.cc
     src/Text.cc
     src/TextIndex.cc
@@ -161,6 +188,8 @@ set_source_files_properties(src/Episode3/monocypher/monocypher.c PROPERTIES LANG
 add_executable(newserv ${SOURCES})
 # Keep the upstream target name to minimize merge churn; brand the output file.
 set_target_properties(newserv PROPERTIES OUTPUT_NAME teaserv)
+include(cmake/CaelumModpackFolder.cmake)
+teaserv_create_modpack_folder(newserv)
 if(NEWSERV_ENABLE_EXTENSIONS)
     target_sources(newserv PRIVATE src/Extensions/Manager.cc src/Extensions/NativeAssets.cc)
     target_compile_definitions(newserv PRIVATE NEWSERV_ENABLE_EXTENSIONS=1)
@@ -196,7 +225,7 @@ if(NEWSERV_ENABLE_EXTENSIONS)
     endif()
 endif()
 target_include_directories(newserv PUBLIC ${ASIO_INCLUDE_DIR} ${Iconv_INCLUDE_DIRS})
-target_link_libraries(newserv phosg::phosg ${Iconv_LIBRARIES} resource_file::resource_file)
+target_link_libraries(newserv phosg::phosg ${Iconv_LIBRARIES} resource_file::resource_file juice-static)
 if (WIN32)
     target_compile_definitions(newserv PUBLIC WINVER=0x0A00 _WIN32_WINNT=0x0A00)
     if(MINGW)

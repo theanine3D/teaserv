@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from . import server, ui
-from .appsettings import AppSettings, IS_WINDOWS, guess_server_dir
+from .appsettings import AppSettings, IS_WINDOWS, guess_server_dir, default_settings_path
 
 MENU_START, MENU_STOP, MENU_RESTART, MENU_CONSOLE, MENU_SETTINGS, MENU_LOGS, MENU_STATS, MENU_QUIT, MENU_STATUS = \
     range(1, 10)
@@ -27,7 +27,7 @@ TRAY_ICON = {
 class App:
     def __init__(self, options):
         self.options = options
-        self.settings = AppSettings(options.settings)
+        self.settings = AppSettings(options.settings or default_settings_path(options.server_dir))
         if options.server_dir:
             self.settings["server_dir"] = os.path.abspath(options.server_dir)
         elif not self.settings.server_dir:
@@ -414,7 +414,7 @@ def prepare_process():
 def parse_options(argv=None):
     parser = argparse.ArgumentParser(prog="teaserv-admin", description="Tray program for a Teaserv server.")
     parser.add_argument("--server-dir", help="server folder (the one that holds the system folder)")
-    parser.add_argument("--settings", help="settings file of this program (default: in your user profile)")
+    parser.add_argument("--settings", help="settings file of this program (default: teaserv-admin-settings.json beside this installation)")
     parser.add_argument("--start", action="store_true", help="start the server right away")
     parser.add_argument("--show", action="store_true", help="open the status window at start")
     parser.add_argument("--no-tray", action="store_true", help="do not use the tray; show the status window")
@@ -424,7 +424,7 @@ def parse_options(argv=None):
 def main(argv=None):
     options = parse_options(argv)
     prepare_process()
-    settings_path = options.settings or AppSettings().path
+    settings_path = options.settings or default_settings_path(options.server_dir)
     if not single_instance(settings_path):
         root = tk.Tk()
         root.withdraw()

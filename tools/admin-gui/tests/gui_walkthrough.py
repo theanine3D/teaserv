@@ -12,6 +12,7 @@ The server folder should be a test copy: its config.json is changed (and restore
 
 import argparse
 import json
+import zipfile
 import os
 import re
 import shutil
@@ -25,7 +26,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 
 from teaserv_admin import app as app_module  # noqa: E402
-from teaserv_admin import jsonc, server  # noqa: E402
+from teaserv_admin import jsonc, server, caelum_files  # noqa: E402
 
 import hidden_desktop  # noqa: E402
 from lobby_media_check import make_bmp  # noqa: E402
@@ -51,8 +52,10 @@ class Walkthrough:
         self.config_copy = os.path.join(self.out, "config.json.before-test")
         shutil.copy2(self.config_path, self.config_copy)
         # The Caelum text files are changed by the walkthrough too and put back at the end
+        self.test_modpack_path = None
+        self.sources_existed = os.path.exists(os.path.join(args.server_dir, "system", "caelum-modpacks-admin.json"))
         self.kept_files = []
-        for name in ("caelum-lobbies.txt", "caelum-modpacks.txt"):
+        for name in ("caelum-lobbies.txt", "caelum-modpacks.txt", "caelum-modpacks-admin.json"):
             path = os.path.join(args.server_dir, "system", name)
             if os.path.exists(path):
                 copy = os.path.join(self.out, name + ".before-test")
@@ -131,6 +134,10 @@ class Walkthrough:
             self.finish(emergency=True)
 
     def finish(self, emergency=False):
+        if self.test_modpack_path and os.path.isfile(self.test_modpack_path): os.remove(self.test_modpack_path)
+        if not self.sources_existed:
+            path = os.path.join(self.args.server_dir, "system", "caelum-modpacks-admin.json")
+            if os.path.isfile(path): os.remove(path)
         srv = self.app.server
         if emergency and srv.is_active():
             srv.stop_and_wait(20)
@@ -331,31 +338,36 @@ class Walkthrough:
         lobbies = settings.panel_named("Caelum lobbies")
         self.check("settings: Caelum lobbies file is read", lobbies.names() == ["LOBBY-CARD06"], lobbies.names())
         modpacks = settings.panel_named("Caelum modpacks")
-        self.check("settings: Caelum modpack list is read", len(modpacks.packs()) == 1 and
-                   modpacks.packs()[0][1].startswith("Caelum lobby test"), [p[1] for p in modpacks.packs()])
-
-        # Save a second lobby and a second modpack through their pages, and refuse a wrong SHA-256
+        yield lambda: not modpacks.refreshing
+        self.check("settings: local Caelum modpack folder is scanned", not modpacks.scan_error and
+                   len(modpacks.packs()) == len([n for n in os.listdir(modpacks.folder) if n.lower().endswith(".zip")]),
+                   modpacks.scan_error or modpacks.filenames)
+        existing_packs = modpacks.packs()
         lobbies_path = os.path.join(app.settings.system_dir, "caelum-lobbies.txt")
         modpacks_path = os.path.join(app.settings.system_dir, "caelum-modpacks.txt")
         lobbies_before = open(lobbies_path, encoding="utf-8", newline="").read()
         modpacks_before = open(modpacks_path, encoding="utf-8", newline="").read()
-        lobbies.add()
-        lobbies.vars[-1].set("GUI TEST LOBBY")
-        modpacks.add()
-        sha_var, name_var, url_var = modpacks.rows[-1]
-        name_var.set("GUI test pack")
-        url_var.set("https://example.com/gui-test.zip")
-        sha_var.set("not a hash")
+        lobbies.add(); lobbies.vars[-1].set("GUI TEST LOBBY")
+        test_path = os.path.join(modpacks.folder, "gui-test-admin-discovery.zip")
+        if os.path.exists(test_path): raise RuntimeError("GUI test modpack already exists")
+        self.test_modpack_path = test_path
+        with zipfile.ZipFile(self.test_modpack_path, "w") as archive:
+            archive.writestr("mod.txt", "name=GUI test pack\nauthor=Test\nversion=1\nregion=any\n")
+            archive.writestr("gui-test.txt", "test")
+        modpacks.refresh()
+        yield lambda: not modpacks.refreshing
+        row = modpacks.filenames.index("gui-test-admin-discovery.zip")
+        modpacks.rows[row][2].set("invalid address")
         settings.save()
         yield 200
-        self.check("settings: a wrong SHA-256 is refused and nothing is written",
+        self.check("settings: invalid URL is refused and nothing is written",
                    "Not saved" in settings.status.cget("text") and
                    open(lobbies_path, encoding="utf-8", newline="").read() == lobbies_before and
                    open(modpacks_path, encoding="utf-8", newline="").read() == modpacks_before,
                    settings.status.cget("text"))
-        settings.show_panel(modpacks)
-        self.shot(settings, "08_settings_modpack_refused")
-        modpacks.rows[-1][0].set("ab" * 32)
+        settings.show_panel(modpacks); self.shot(settings, "08_settings_modpack_refused")
+        modpacks.rows[row][2].set("https://example.com/gui-test.zip")
+        expected_packs = existing_packs + [modpacks.packs()[row]]
         # Lobby media: a picture for all players, and a Caelum-only texture with an original-client picture
         media = settings.panel_named("Episode 3 lobby media")
         media.add()
@@ -383,9 +395,8 @@ class Walkthrough:
         modpacks_after = open(modpacks_path, encoding="utf-8", newline="").read()
         self.check("settings: Caelum lobby added to the file", ok and lobbies_after ==
                    lobbies_before.rstrip("\r\n") + "\n21 GUI TEST LOBBY\n", repr(lobbies_after[-40:]))
-        self.check("settings: Caelum modpack added to the file", modpacks_after == modpacks_before.rstrip("\r\n") +
-                   "\n" + "ab" * 32 + "\tGUI test pack\thttps://example.com/gui-test.zip\n",
-                   repr(modpacks_after[-60:]))
+        self.check("settings: Caelum modpack added to the file", modpacks_after ==
+                   caelum_files.format_modpacks(expected_packs, "\r\n" if "\r\n" in modpacks_before else "\n"), repr(modpacks_after[-140:]))
         self.check("settings: the report says when the Caelum changes take effect",
                    "Caelum modpacks: used for players who log in from now on" in settings.status.cget("text") and
                    "Needs a server restart: Caelum lobbies" in settings.status.cget("text"),

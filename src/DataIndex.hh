@@ -33,6 +33,7 @@
 #include "TeamIndex.hh"
 #include "TekkerAdjustmentSet.hh"
 #include "WordSelectTable.hh"
+#include "CaelumVoice.hh"
 
 struct DataIndex {
   // This structure contains everything which is essentially immutable during the server's uptime - e.g. configuration,
@@ -300,6 +301,7 @@ struct DataIndex {
   std::vector<uint32_t> client_customization_public_lobby_search_order;
   uint8_t pre_lobby_event = 0;
   std::vector<uint8_t> per_lobby_events;
+  caelum::voice::Config caelum_voice; // "CaelumVoice" (docs/CAELUM_VOICE.md)
   int32_t ep3_menu_song = -1;
 
   std::map<std::string, uint32_t> all_addresses;

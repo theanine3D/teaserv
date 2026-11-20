@@ -1,5 +1,45 @@
 # Caelum modpacks
 
+## Server setup with Teaserv Admin
+
+Place the ZIPs this server requires in `system/caelum-modpacks/`. Fresh native builds and release archives
+include this folder, even when empty. In Admin, open **Settings → Caelum modpacks**, press **Refresh** if the
+folder changed, and enter a download URL for each ZIP. Names and SHA-256 hashes are filled from the local
+ZIPs automatically, for both plain and encrypted Caelum packs. Press **Save**, and upload identical ZIPs
+to those URLs. Rebuilt ZIPs with the same filenames keep their URLs when refreshed or after reopening Admin.
+Filename associations are kept in `system/caelum-modpacks-admin.json`; the server still reads the standard
+`system/caelum-modpacks.txt` manifest. Encrypted packs still need their separately configured server keys.
+Invalid ZIPs block saving until fixed; duplicate copies must be removed from the folder.
+Restart the server after changing packs that add or modify cards.
+
+### Built-in download server
+
+Servers without another web host can let Teaserv send the ZIPs itself. Turn on **Serve the modpacks from this
+server** at the top of **Settings → Caelum modpacks** (off by default), choose the **Download server port**
+(default 80; use another, such as 8080, if a program already uses 80) and, if needed, the **Address players
+download from** (a host name or IPv4 address; empty uses **External address** under Network, which must then be
+an IPv4 address). While it is on, Admin makes every download address itself, as
+`http://<address>[:<port>]/modpacks/<file name>`, shows the address fields greyed out with a note, and writes them
+into `system/caelum-modpacks.txt` on **Save**. Addresses typed earlier are kept and come back when the download
+server is turned off. Restart the server after turning it on or changing the port. Players on the Internet need
+the port forwarded on your router; players on your own network may need the local address instead, depending on
+your router. `config.example.json` sets the External address to `127.0.0.1`, which reaches only Caelum on the
+server's own PC; the page says so, and warns in red when the address is a private network address that is not one
+of this PC's (for example `10.0.1.5`, the example address of older copies), because players could not reach it.
+
+The server reads `TeaservModpackHTTPEnabled` (default `false`) and `TeaservModpackHTTPPort` (default 80) from
+`config.json` once at startup (`TeaservModpackHTTPAddress` is used only by Admin). It listens on all IPv4
+interfaces and serves only the `.zip` files directly inside `system/caelum-modpacks` (or `CAELUM_MODPACK_DIR`):
+`GET` and `HEAD` of `/modpacks/<percent-encoded file name>`, one request per connection, with `Content-Length`;
+folders, other file types, names starting with a dot and anything else get 404. At most 32 downloads run at once;
+a request must arrive within 20 seconds and a stalled download is dropped after 60 seconds. Each finished download
+is logged as `Sent <file name> (<bytes> bytes) to <address>`. If the port cannot be opened, the server logs an error and runs on without it.
+There is no encryption: Caelum checks every download against the SHA-256 in the mod list, and sealed packs stay
+encrypted in the file itself. The code is `src/TeaservModpackHttp.hh/.cc`, started from
+`teaserv_stats::start` (see the [integration map](EXTENSIONS-INTEGRATION.md)).
+
+## Client launcher
+
 Open **Mods**, below Servers in the launcher. **Install** copies a verified ZIP
 into `mods` next to Caelum. Installation does not automatically enable a pack;
 use its Enable button. ZIPs placed in that folder directly are also listed.
@@ -166,14 +206,27 @@ wire format: Caelum project `pso_ep3_server_modpacks.md`). It is listed in
 `caelum-modpacks.txt` like any pack; Caelum recognises it from the ZIP.
 
 * **Identity.** Teaserv makes `system/caelum-server-identity.key` on first start
-  (or uses `CAELUM_SERVER_IDENTITY`) and logs its public key. Give that public key
-  to modpack creators; they seal packs for it. **Back the file up and keep it
+  (or uses `CAELUM_SERVER_IDENTITY`) and logs its public key. Teaserv Admin's
+  **Copy Public Key** button (Settings → Caelum modpacks) copies the same key to the
+  clipboard at any time, calculated from `system/caelum-server-identity.key`
+  (`tools/admin-gui/teaserv_admin/caelum_identity.py`; a `CAELUM_SERVER_IDENTITY`
+  file elsewhere is not read). Give that public key to modpack creators; they seal
+  packs for it. **Back the file up and keep it
   secret.** Losing it makes every pack sealed for it unusable; another server with
   a copy of it can unlock those packs. Moving the server means moving this file.
 * **Keys.** `system/caelum-server-keys.txt` (or `CAELUM_SERVER_KEYS`): one
   `<pack id> <pack key> [name]` line per pack, as `caelum_pack_tool seal` prints
   it; `#` starts a comment. Read at startup and again for every Caelum login.
-  Never published, never logged.
+  Never published, never logged. Teaserv Admin writes it: on **Settings → Caelum
+  modpacks** every encrypted ZIP gets a **Server pack key** field (hidden unless
+  **Show** is ticked) that takes the key alone or the whole key line the Caelum
+  Modkit shows after Build Modpack (**Copy Key Line**). The page checks at once
+  that the key opens the pack (the sealed index's tag, as `crypto_aead_unlock`
+  does; `teaserv_admin/caelum_serverpack.py`) and says whether the pack lists this
+  server's public key. **Save** refuses an encrypted pack without a working key,
+  then adds or replaces that pack's line; comments and other packs' lines stay.
+  Without the line a Caelum login fails with "The server could not load its
+  modpack card data".
 * **Handshake.** While a Caelum client is in the mod handshake, it may send one
   `F2` flag `4` (`CSK4`, one-time X25519 key + pack ids). Teaserv answers `F2` flag
   `5` with the keys it holds for those packs, wrapped to the client's key and

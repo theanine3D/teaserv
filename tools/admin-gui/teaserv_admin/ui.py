@@ -93,6 +93,52 @@ class ScrollFrame(ttk.Frame):
         self.canvas.yview_moveto(max(0, (y - 40) / total))
 
 
+class Tooltip:
+    """A small text box shown while the mouse rests on a widget (after `delay` ms), hidden when it leaves or clicks."""
+
+    def __init__(self, widget, text, delay=500, wrap=360):
+        self.widget, self.text, self.delay, self.wrap = widget, text, delay, wrap
+        self.tip = None
+        self.pending = None
+        widget.bind("<Enter>", self.schedule, add="+")
+        widget.bind("<Leave>", self.hide, add="+")
+        widget.bind("<ButtonPress>", self.hide, add="+")
+        widget.bind("<Destroy>", self.hide, add="+")
+
+    def schedule(self, event=None):
+        self.cancel()
+        self.pending = self.widget.after(self.delay, self.show)
+
+    def cancel(self):
+        if self.pending is not None:
+            try:
+                self.widget.after_cancel(self.pending)
+            except tk.TclError:
+                pass
+            self.pending = None
+
+    def show(self):
+        self.pending = None
+        if self.tip is not None or not self.widget.winfo_viewable():
+            return
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry("+%d+%d" % (x, y))
+        tk.Label(self.tip, text=self.text, justify="left", wraplength=self.wrap, background="#ffffe8",
+                 foreground=INK, relief="solid", borderwidth=1, padx=6, pady=4).pack()
+
+    def hide(self, event=None):
+        self.cancel()
+        if self.tip is not None:
+            try:
+                self.tip.destroy()
+            except tk.TclError:
+                pass
+            self.tip = None
+
+
 def center(window, width, height):
     window.update_idletasks()
     x = max(0, (window.winfo_screenwidth() - width) // 2)

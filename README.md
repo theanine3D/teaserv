@@ -61,20 +61,21 @@ Teaserv has also been built locally with native MinGW-w64 and Ninja; cross-compi
 3. Put MinGW's `bin` directory and Ninja on `PATH`. In PowerShell, from the Teaserv checkout, adapt the dependency paths below to your installation:
 
 ```powershell
+$Deps = "<dependency install prefix>"
 cmake -S . -B build/server-on -G Ninja `
   -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ `
   -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="C:/teaserv-deps" `
-  -DASIO_INCLUDE_DIR="C:/teaserv-deps/include" `
+  -DCMAKE_PREFIX_PATH="$Deps" `
+  -DASIO_INCLUDE_DIR="$Deps/include" `
   -DNEWSERV_ENABLE_EXTENSIONS=ON `
-  -DLUA_INCLUDE_DIR="C:/teaserv-deps/include" `
-  -DLUA_LIBRARY="C:/teaserv-deps/lib/liblua.a" `
+  -DLUA_INCLUDE_DIR="$Deps/include" `
+  -DLUA_LIBRARY="$Deps/lib/liblua.a" `
   -DNEWSERV_WINDOWS_STATIC_LINK=OFF
 cmake --build build/server-on --parallel
 python tools/admin-gui/build_exe.py --out (Join-Path $PWD "build/server-on") --work (Join-Path $PWD "build/admin-on")
 ```
 
-`C:/teaserv-deps` is an example install prefix, not a bundled directory. `LUA_INCLUDE_DIR` must contain `lua.h`; the Lua library filename may differ in your installation. If discovery fails, pass `Iconv_INCLUDE_DIRS` and `Iconv_LIBRARIES` explicitly; `phosg_DIR` and `resource_file_DIR` can point to their installed CMake package directories. `WINDOWS_ENV` is also supported as a hint for Asio and Iconv's `include`/`lib` directories.
+Set `$Deps` to the prefix where you installed the dependencies; it is not a bundled directory. `LUA_INCLUDE_DIR` must contain `lua.h`; the Lua library filename may differ in your installation. If discovery fails, pass `Iconv_INCLUDE_DIRS` and `Iconv_LIBRARIES` explicitly; `phosg_DIR` and `resource_file_DIR` can point to their installed CMake package directories. `WINDOWS_ENV` is also supported as a hint for Asio and Iconv's `include`/`lib` directories.
 
 For the base build, use `build/server-off` for both the server build and GUI output (and `build/admin-off` for GUI work files), set `-DNEWSERV_ENABLE_EXTENSIONS=OFF`, and omit the two Lua arguments. The documented local MinGW setup requires `NEWSERV_WINDOWS_STATIC_LINK=OFF` because the default static link fails with duplicate C++ runtime definitions. With this option, matching MinGW runtime and dependency DLLs must be discoverable on `PATH` or alongside the executable. See [local Windows build details](docs/EXTENSIONS-VALIDATION.md#local-windows-build-environment) for the tested environment's dependency adjustment and data-symlink limitations; other Windows toolchains have not been established by those checks.
 

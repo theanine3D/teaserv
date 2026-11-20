@@ -1014,6 +1014,15 @@ void DataIndex::load_config_early() {
   } catch (const std::out_of_range&) {
   }
 
+  {
+    const phosg::JSON* voice = nullptr;
+    try {
+      voice = &this->config_json->at("CaelumVoice");
+    } catch (const std::out_of_range&) {
+    }
+    this->caelum_voice = caelum::voice::parse_config(voice);
+  }
+
   this->ep3_menu_song = this->config_json->get_int("Episode3MenuSong", -1);
 
   try {
