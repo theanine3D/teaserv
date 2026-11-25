@@ -39,7 +39,7 @@ class ControlWindow(tk.Toplevel):
         windows = ttk.Frame(body)
         windows.pack(anchor="w")
         for column, (label, name) in enumerate((("Console", "console"), ("Settings", "settings"), ("Logs", "logs"),
-                                                 ("Statistics", "stats"))):
+                                                 ("Statistics", "stats"), ("Accounts", "accounts"))):
             ttk.Button(windows, text=label, width=11, command=lambda n=name: app.open_window(n)).grid(
                 row=0, column=column, padx=(0, 6))
         ttk.Separator(body).pack(fill="x", pady=12)

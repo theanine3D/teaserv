@@ -1,0 +1,15 @@
+# Hats for the wearhat package: one line per hat, read when the package loads ("extensions reload" after an edit).
+#
+#   name    what players type ($wearhat <name>), letters and digits
+#   model   the BML file (disc or server modpack)
+#   part    the model inside the BML; - = its first model
+#   height  units above the head bone (about 13.8 above the feet); - = 1.5
+#   scale   percent; - = 100
+#   tilt    degrees around the sideways axis (rot_x); try a small positive and negative value; - = 0
+#   who     everyone, moderator or admin: who may wear it; - = everyone
+#
+# Use - for a field you leave out. The hat stays level and faces the way the player faces; model it standing upright
+# with its front toward +Z. The files come from the disc or a server modpack listed in caelum-modpacks.txt.
+#
+# name    model                   part                              height  scale  tilt  who
+fish      bm_sakana_obj_lobby.bml lobby_suisou_sakana01_yellow.gj   2.5     60     0     everyone

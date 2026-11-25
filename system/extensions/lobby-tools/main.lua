@@ -15,3 +15,26 @@ extensions.command("who", {help = "List connected players and session IDs in you
       " [" .. player.client_version .. "]" .. (player.is_self and " (you)" or ""))
   end
 end)
+
+local function tenth(value)
+  return string.format("%.1f", value)
+end
+
+-- $xyz: where you stand, for placing things (the concert's x, y, z and lobby settings). The server
+-- knows a player's height once they stop walking; facing is not tracked.
+extensions.command("xyz", {help = "Show your X, Y, Z position and lobby (for concert and scene setup).",
+  cooldown_ms = 2000, arguments = {}
+}, function()
+  local here = extensions.position()
+  if not here then
+    extensions.reply("Your position is unavailable.")
+    return
+  end
+  extensions.reply("X " .. tenth(here.x) .. "  Y " .. tenth(here.y) .. "  Z " .. tenth(here.z))
+  if here.lobby_number then
+    extensions.reply("Lobby " .. here.lobby_name .. " (number " .. here.lobby_number .. ")")
+  elseif here.is_game then
+    extensions.reply("In a game, floor " .. here.floor)
+  end
+end)
+

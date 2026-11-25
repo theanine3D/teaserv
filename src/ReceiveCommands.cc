@@ -2112,6 +2112,13 @@ static asio::awaitable<void> on_CA_Ep3(std::shared_ptr<Client> c, Channel::Messa
     throw;
   }
 
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+  // Observation only: reports a decided battle once (see docs/EXTENSIONS-INTEGRATION.md).
+  if (s->extensions && l->ep3_server->setup_phase == Episode3::SetupPhase::BATTLE_ENDED) {
+    s->extensions->ep3_battle_ended(l);
+  }
+#endif
+
   // If the battle has finished, finalize the recording and link it to all participating players and spectators
   if (!battle_finished_before && l->ep3_server->battle_finished && l->battle_record) {
     l->battle_record->set_battle_end_timestamp();
@@ -5836,6 +5843,13 @@ static asio::awaitable<void> on_F2_Ep3(std::shared_ptr<Client> c, Channel::Messa
       }
       break;
     default:
+#ifdef NEWSERV_ENABLE_EXTENSIONS
+      // Caelum extension channel (src/CaelumExt.h): HELLO and client reports. Never fatal.
+      if (msg.flag >= 0x20 && msg.flag <= 0x2F && s->extensions) {
+        s->extensions->caelum_ext_message(c, msg.flag, msg.data);
+        break;
+      }
+#endif
       c->log.warning_f("Ignoring unknown Caelum command F2 flag {:02X}", msg.flag);
   }
   co_return;

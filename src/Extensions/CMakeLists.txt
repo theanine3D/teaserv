@@ -1,6 +1,6 @@
 find_package(Lua 5.4 EXACT REQUIRED)
 
-add_library(teaserv-extension-runtime STATIC Runtime.cc Scene.cc NativeMediaFormat.cc CommandArguments.cc CommandCatalog.cc Settings.cc LobbyView.cc GameLifecycle.cc)
+add_library(teaserv-extension-runtime STATIC Runtime.cc Scene.cc NativeMediaFormat.cc CommandArguments.cc CommandCatalog.cc Settings.cc LobbyView.cc GameLifecycle.cc Clock.cc PlayerData.cc CaelumScenes.cc)
 target_include_directories(teaserv-extension-runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(teaserv-extension-runtime PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(teaserv-extension-runtime PUBLIC ${LUA_LIBRARIES})
@@ -57,6 +57,19 @@ add_executable(extension-announcement-tests ../../tests/extensions/AnnouncementT
 target_link_libraries(extension-announcement-tests PRIVATE teaserv-extension-runtime)
 add_test(NAME extension-announcements COMMAND extension-announcement-tests
     ${CMAKE_CURRENT_SOURCE_DIR}/../../system/extensions/server-announcements/main.lua)
+
+add_executable(extension-player-data-tests ../../tests/extensions/PlayerDataTest.cc)
+target_link_libraries(extension-player-data-tests PRIVATE teaserv-extension-runtime)
+add_test(NAME extension-player-data COMMAND extension-player-data-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../system/extensions/daily-reward/main.lua
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../system/extensions/player-of-the-period/main.lua)
+
+add_executable(extension-caelum-scene-tests ../../tests/extensions/CaelumScenesTest.cc)
+target_link_libraries(extension-caelum-scene-tests PRIVATE teaserv-extension-runtime)
+add_test(NAME extension-caelum-scenes COMMAND extension-caelum-scene-tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../system/extensions/concert/main.lua
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../system/extensions/pets/main.lua
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../system/extensions/wearhat/main.lua)
 
 find_package(Python3 QUIET COMPONENTS Interpreter)
 find_package(Git QUIET)

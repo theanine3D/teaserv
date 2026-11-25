@@ -16,6 +16,11 @@
 #include "Settings.hh"
 #include "LobbyView.hh"
 #include "GameLifecycle.hh"
+#include "Clock.hh"
+#include "PlayerData.hh"
+#include "CaelumScenes.hh"
+
+#include <variant>
 
 struct lua_State;
 struct lua_Debug;
@@ -32,6 +37,30 @@ struct Context {
   std::string client_version = "";
   bool is_game = false;
   bool allow_player_actions = true;
+  // Opaque stable account name ("p" + 24 hex digits), or empty when unknown.
+  std::string player_key = "";
+};
+
+// Copied metadata for events without a player context (schedules, battle
+// results). A value is a scalar or an array of nested tables.
+struct InfoValue;
+struct InfoTable {
+  std::vector<std::string> keys;
+  std::vector<InfoValue> values;
+  void add(std::string key, InfoValue value);
+};
+struct InfoValue {
+  std::variant<bool, int64_t, std::string, std::vector<InfoTable>> value;
+};
+inline void InfoTable::add(std::string key, InfoValue value) {
+  this->keys.emplace_back(std::move(key));
+  this->values.emplace_back(std::move(value));
+}
+
+struct MesetaResult {
+  bool ok = false;
+  const char* status = "unavailable";
+  int64_t balance = -1; // New balance when granted online, otherwise -1
 };
 
 struct Host {
@@ -56,6 +85,39 @@ struct Host {
   virtual SceneResult scene_event(const Context&, const std::string&, int) {
     return {false, "lobby event backend is unavailable"};
   }
+  // Wall clock in the server's configured zone. The default is UTC.
+  virtual ClockTime now() const;
+  // The calling package's per-player store and boards, or null when unavailable.
+  virtual PlayerData* player_data(const std::string&) { return nullptr; }
+  // Add Episode 3 Meseta to the account named by player_key: at once when it
+  // is online, otherwise queued for its next login. The host owns limits,
+  // idempotency (grant_id), persistence, and the client update.
+  virtual MesetaResult meseta_grant(const std::string&, const std::string&, int64_t, const std::string&, const std::string&) {
+    return {};
+  }
+  // Caelum-only lobby objects and music (CaelumScenes.hh). The lobby is a Caelum
+  // extra lobby number (20-63). A null music spec stops the package's music.
+  virtual CaelumResult caelum_object(const std::string&, uint8_t, const std::string&, const CaelumObjectSpec&) {
+    return {false, "unavailable"};
+  }
+  virtual bool caelum_remove(const std::string&, uint8_t, const std::string&) { return false; }
+  virtual CaelumResult caelum_music(const std::string&, uint8_t, const CaelumMusicSpec*) { return {false, "unavailable"}; }
+  virtual bool caelum_clear(const std::string&, uint8_t) { return false; }
+  // Clients in that lobby that can show extension objects, or -1 when the lobby does not exist.
+  virtual int caelum_listeners(uint8_t) const { return -1; }
+  // A public lobby's number (0-63, see CaelumScenes) from its menu name (any case), or CaelumScenes::NO_LOBBY.
+  virtual uint8_t caelum_lobby_named(const std::string&) const { return CaelumScenes::NO_LOBBY; }
+  // A public lobby's menu name, or nullopt when the server has no lobby with that number.
+  virtual std::optional<std::string> caelum_lobby_name(uint8_t) const { return std::nullopt; }
+  // The live caller's own position in its lobby or game, as the server last heard it from the client.
+  struct Position {
+    double x = 0, y = 0, z = 0;
+    uint32_t floor = 0;
+    uint8_t lobby_number = CaelumScenes::NO_LOBBY;   // in a public lobby: its number
+    std::string lobby_name;
+    bool is_game = false;
+  };
+  virtual std::optional<Position> player_position(const Context&) const { return std::nullopt; }
 };
 
 struct Package {
@@ -67,6 +129,8 @@ struct Package {
   uint32_t storage_version = 0;
   uint32_t target_storage_version = 0;
   Settings settings = {};
+  // Text files the manifest lists in "data_files" (read from the package folder when it is staged), by name.
+  std::map<std::string, std::string> data_files = {};
 };
 
 struct RuntimeDiagnostics {
@@ -92,10 +156,17 @@ struct CommandDetails {
 class Runtime {
 public:
   static constexpr size_t MAX_SOURCE_BYTES = 256 * 1024;
+  static constexpr size_t MAX_DATA_FILES = 16;
+  static constexpr size_t MAX_DATA_FILE_BYTES = 64 * 1024;
+  static constexpr size_t MAX_DATA_BYTES = 256 * 1024; // all of a package's data files together
+  // A data file name: 1-64 characters of a-z 0-9 _ - . ending in ".txt", no folders, not starting with a dot.
+  static bool valid_data_file_name(const std::string& name);
   static constexpr size_t MAX_STORAGE_BYTES = 64 * 1024;
   static constexpr size_t MAX_MEMORY_BYTES = 4 * 1024 * 1024;
   static constexpr size_t MAX_TIMERS = 32;
   static constexpr size_t MAX_REGISTRATIONS = 32;
+  static constexpr size_t MAX_SCHEDULES = 16;
+  static constexpr int64_t MAX_SERVICE_TIMER_MS = 6 * 3600 * 1000;
   static constexpr uint32_t MAX_STORAGE_VERSION = 0x7FFFFFFF;
   static constexpr uint32_t CALLBACK_TIME_BUDGET_MS = 10;
 
@@ -116,6 +187,11 @@ public:
   void emit(const std::string& event, Context context);
   void emit_game(const std::string& event, const GameSnapshot& snapshot);
   void emit_quest_acknowledgement(const QuestLoadAcknowledgement& snapshot);
+  // Metadata-only events under extension (service) authority: no player context.
+  void emit_info(const std::string& event, const InfoTable& info);
+  // Run every schedule matching this minute. The host calls it once per minute.
+  void run_schedules(const ClockTime& time);
+  size_t schedule_count() const;
   // Explicit activation only: constructing/checking a candidate emits nothing.
   void activate(const std::string& reason);
   void deactivate(const std::string& reason);
@@ -144,6 +220,12 @@ private:
     Context context;
     std::chrono::steady_clock::time_point due;
     uint32_t interval_ms = 0; // Zero is a one-shot; repeating timers retain their slot while running.
+    bool service = false; // No player: runs under extension authority, never revalidates a session.
+  };
+  struct Schedule {
+    std::string name;
+    ScheduleSpec spec;
+    int ref;
   };
 
   Host& host;
@@ -181,8 +263,13 @@ private:
   // snapshot destructor. Cleared after every protected callback, including OOM.
   std::optional<LobbyView> current_lobby_view;
   std::optional<std::vector<CatalogCommand>> current_command_catalog;
+  std::optional<std::vector<BoardEntry>> current_board_top;
   const GameSnapshot* current_game = nullptr;
   const QuestLoadAcknowledgement* current_quest_acknowledgement = nullptr;
+  const InfoTable* current_info = nullptr;
+  std::vector<Schedule> schedules;
+  void call_info(int ref, const std::string& event, const InfoTable& info);
+  PlayerData& require_player_data(const char* grant);
   void emit_game_observation(const std::string& event, const GameSnapshot& snapshot, const QuestLoadAcknowledgement* acknowledgement);
   std::map<std::string, Command> commands;
   std::map<std::string, std::vector<int>> events;
@@ -224,6 +311,8 @@ private:
   int storage_set(lua_State* L);
   int register_migration(lua_State* L);
   int setting(lua_State* L);
+  int package_text(lua_State* L);
+  int has_permission(lua_State* L);
   int lobby(lua_State* L);
   int command_list(lua_State* L);
   int scene_capabilities(lua_State* L);
@@ -231,6 +320,24 @@ private:
   int scene_spawn(lua_State* L);
   int scene_remove(lua_State* L);
   int scene_event(lua_State* L);
+  int now(lua_State* L);
+  int schedule(lua_State* L);
+  int service_after(lua_State* L);
+  int player_get(lua_State* L);
+  int player_set(lua_State* L);
+  int board_add(lua_State* L);
+  int board_get(lua_State* L);
+  int board_top(lua_State* L);
+  int board_reset(lua_State* L);
+  int meseta_grant(lua_State* L);
+  uint8_t caelum_lobby_arg(lua_State* L, int index);
+  int caelum_object(lua_State* L);
+  int caelum_remove(lua_State* L);
+  int caelum_music(lua_State* L);
+  int caelum_clear(lua_State* L);
+  int caelum_listeners(lua_State* L);
+  int caelum_lobby(lua_State* L);
+  int position(lua_State* L);
 };
 
 } // namespace teaserv::extensions

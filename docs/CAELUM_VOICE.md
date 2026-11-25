@@ -44,7 +44,7 @@ routers (many mobile and some home connections) may not hear each other.
 The relay address sent to each player is the same address the player uses to reach the game server
 (`LocalAddress` / `ExternalAddress` rules of `DataIndex::connect_address_for_client`).
 
-## Protocol (command F2; flags 1-5 are the Caelum modpack handshake)
+## Protocol (command F2; flags 1-5 are the Caelum modpack handshake, 0x20-0x2F the [extension channel](CAELUM_EXT.md))
 
 | flag | direction | body |
 |---|---|---|

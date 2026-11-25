@@ -1,0 +1,23 @@
+{
+  "Extensions": {
+    "Enabled": true,
+    "Packages": [
+      {
+        "id": "pets",
+        "grants": ["commands", "chat.reply", "events", "lobby.read", "caelum.scene", "players.store"],
+        "Settings": {
+          "choices": "",
+          "side": 9,
+          "behind": 6
+        }
+      },
+      {
+        "id": "wearhat",
+        "grants": ["commands", "chat.reply", "events", "lobby.read", "caelum.scene", "players.store"],
+        "Settings": {
+          "choices": ""
+        }
+      }
+    ]
+  }
+}

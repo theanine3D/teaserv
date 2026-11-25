@@ -269,8 +269,9 @@ class ServerProcess:
         except (OSError, ValueError):
             return False
 
-    def send_command(self, text):
-        """Send a shell command typed by the admin. Returns "" or the reason it was not sent."""
+    def send_command(self, text, shown=None):
+        """Send a shell command. Returns "" or the reason it was not sent. shown: the text for the console and the log
+        instead of the command (the Accounts window hides passwords this way)."""
         text = text.strip()
         if not text:
             return ""
@@ -281,7 +282,7 @@ class ServerProcess:
         if text in ("exit", "quit"):
             self.stop()
             return ""
-        line = self._add("%s %d %s - [Admin] > %s" % ("I", os.getpid(), self._stamp(), text), "cmd", "I")
+        line = self._add("%s %d %s - [Admin] > %s" % ("I", os.getpid(), self._stamp(), shown or text), "cmd", "I")
         self._write_log([line])
         for listener in list(self.line_listeners):
             listener([line])

@@ -19,7 +19,7 @@ void validate_command_catalog(const std::vector<CatalogCommand>& catalog) {
       return c < 0x20 || c == 0x7F;
     });
   };
-  static const std::set<std::string> permissions{"everyone", "announce", "debug", "moderator", "root", "change-event"};
+  static const std::set<std::string> permissions{"everyone", "announce", "debug", "moderator", "admin", "root", "change-event"};
   std::set<std::string> names;
   std::map<std::string, size_t> counts;
   for (const auto& command : catalog) {

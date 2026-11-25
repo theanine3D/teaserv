@@ -191,7 +191,7 @@ set_target_properties(newserv PROPERTIES OUTPUT_NAME teaserv)
 include(cmake/CaelumModpackFolder.cmake)
 teaserv_create_modpack_folder(newserv)
 if(NEWSERV_ENABLE_EXTENSIONS)
-    target_sources(newserv PRIVATE src/Extensions/Manager.cc src/Extensions/NativeAssets.cc)
+    target_sources(newserv PRIVATE src/Extensions/Manager.cc src/Extensions/ManagerPlayers.cc src/Extensions/ManagerCaelum.cc src/Extensions/NativeAssets.cc)
     target_compile_definitions(newserv PRIVATE NEWSERV_ENABLE_EXTENSIONS=1)
     target_link_libraries(newserv teaserv-extension-runtime)
     add_executable(extension-native-assets-tests
@@ -215,6 +215,11 @@ if(NEWSERV_ENABLE_EXTENSIONS)
             --server $<TARGET_FILE:newserv> --source ${NEWSERV_TEST_DATA_DIR}
             --build ${CMAKE_BINARY_DIR} --jsonformat ${PHOSG_JSONFORMAT_EXECUTABLE})
         set_tests_properties(extension-storage-smoke PROPERTIES TIMEOUT 360)
+        add_test(NAME extension-players-smoke COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tests/extensions/PlayersSmokeTest.py
+            --server $<TARGET_FILE:newserv> --source ${NEWSERV_TEST_DATA_DIR}
+            --build ${CMAKE_BINARY_DIR} --jsonformat ${PHOSG_JSONFORMAT_EXECUTABLE})
+        set_tests_properties(extension-players-smoke PROPERTIES TIMEOUT 420)
         add_test(NAME extension-package-smoke COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/tests/extensions/PackageLifecycleSmokeTest.py
             --server $<TARGET_FILE:newserv> --source ${NEWSERV_TEST_DATA_DIR}

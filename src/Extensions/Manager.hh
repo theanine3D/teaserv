@@ -13,6 +13,9 @@
 class Client;
 class ServerState;
 struct Lobby;
+namespace Episode3 {
+class Server;
+}
 
 namespace teaserv::extensions {
 
@@ -42,6 +45,12 @@ public:
   void proxy_started(uint64_t client_id);
   void send_login_media(std::shared_ptr<Client> client);
   void prepare_scene(std::shared_ptr<Client> client, std::shared_ptr<Lobby> lobby);
+  // Episode 3 battle result observation (ManagerPlayers.cc). Call after the battle
+  // server handled a command; reports each battle server object at most once.
+  void ep3_battle_ended(std::shared_ptr<Lobby> lobby);
+  std::deque<std::string> economy_info() const;
+  // Caelum extension channel (ManagerCaelum.cc): a client's F2 flag 0x20-0x2F.
+  void caelum_ext_message(std::shared_ptr<Client> client, uint8_t flag, const std::string& data);
 
 private:
   explicit Manager(std::shared_ptr<ServerState> server);
@@ -64,6 +73,56 @@ private:
   bool experimental_models = false;
   std::set<int64_t> dirty_scene_lobbies;
   std::chrono::steady_clock::time_point last_scene_flush{};
+
+  // Player identity, per-player data, Meseta ledger and schedules (ManagerPlayers.cc).
+  struct PendingGrant {
+    std::string owner;
+    int64_t amount = 0;
+    std::string reason;
+  };
+  struct KnownPlayer {
+    uint32_t account_id = 0;
+    std::string name;
+  };
+  struct DailyTotal {
+    int64_t day = 0;
+    int64_t total = 0;
+  };
+  bool players_loaded = false;
+  bool players_dirty = false;
+  std::string player_key_secret; // 32 random bytes
+  std::map<std::string, KnownPlayer> known_players; // By player key
+  std::map<uint32_t, std::string> key_for_account;
+  std::map<std::string, std::vector<PendingGrant>> pending_grants; // By player key
+  std::map<std::string, DailyTotal> daily_totals; // By package
+  std::map<std::string, PlayerData> package_players; // By package
+  std::map<uint64_t, std::vector<std::string>> login_notices; // By session ID, shown at the first lobby
+  std::vector<std::weak_ptr<Episode3::Server>> reported_battles;
+  int64_t last_schedule_minute = 0;
+  bool clock_utc = false;
+  int64_t economy_max_grant = 100000;
+  int64_t economy_daily_limit = 10000000;
+  int64_t economy_balance_cap = 9999999;
+  void load_players();
+  void flush_players();
+  void read_player_settings();
+  std::string player_key_for(std::shared_ptr<Client> client);
+  void player_logged_in(std::shared_ptr<Client> client);
+  void deliver_login_notices(std::shared_ptr<Client> client, std::shared_ptr<Lobby> lobby);
+  void run_schedules();
+  // Caelum extension channel and lobby objects (ManagerCaelum.cc).
+  struct CaelumPeer {
+    uint32_t caps = 0;
+    uint32_t max_objects = 16; // HELLO "objects=" (CEXT_LEGACY_OBJECTS without it)
+    uint32_t events = 0; // Client reports accepted this session (bounded)
+  };
+  CaelumScenes caelum;
+  std::map<uint64_t, CaelumPeer> caelum_peers; // By session ID; only clients that sent HELLO
+  void caelum_send_snapshot(std::shared_ptr<Client> client, std::shared_ptr<Lobby> lobby);
+  void caelum_detach(uint64_t session); // Removes the objects attached to a player who left the lobby
+  void caelum_sync_lobby(uint8_t number);
+  void caelum_cleanup_owner(const std::string& owner);
+  std::string caelum_info() const;
 
   Context context_for(std::shared_ptr<Client> client, std::shared_ptr<Lobby> lobby) const;
   std::shared_ptr<Client> live_client(const Context& context) const;
@@ -100,6 +159,19 @@ private:
       const std::string& asset, const std::string& slot, uint32_t lifetime_ms) override;
   SceneResult scene_remove(const Context& context, const std::string& owner, const std::string& key) override;
   SceneResult scene_event(const Context& context, const std::string& owner, int event) override;
+  ClockTime now() const override;
+  PlayerData* player_data(const std::string& owner) override;
+  MesetaResult meseta_grant(const std::string& owner, const std::string& player_key, int64_t amount,
+      const std::string& grant_id, const std::string& reason) override;
+  CaelumResult caelum_object(const std::string& owner, uint8_t lobby, const std::string& key, const CaelumObjectSpec& spec) override;
+  bool caelum_remove(const std::string& owner, uint8_t lobby, const std::string& key) override;
+  CaelumResult caelum_music(const std::string& owner, uint8_t lobby, const CaelumMusicSpec* spec) override;
+  bool caelum_clear(const std::string& owner, uint8_t lobby) override;
+  int caelum_listeners(uint8_t lobby) const override;
+  uint8_t caelum_lobby_named(const std::string& name) const override;
+  std::optional<std::string> caelum_lobby_name(uint8_t lobby) const override;
+  std::optional<Position> player_position(const Context& context) const override;
+  std::shared_ptr<Lobby> public_lobby(uint8_t number) const;
 };
 
 } // namespace teaserv::extensions

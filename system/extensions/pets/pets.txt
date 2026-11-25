@@ -1,0 +1,18 @@
+# Pets for the pets package: one line per pet, read when the package loads ("extensions reload" after an edit).
+#
+#   name    what players type ($pet <name>), letters and digits
+#   model   the BML file (disc or server modpack)
+#   part    the model inside the BML; - = its first model
+#   idle    the motion played while the player stands still; - = none
+#   walk    the motion played while the pet follows a moving player; - = the idle motion
+#   scale   percent; - = 100
+#   who     everyone, moderator or admin: who may use it; - = everyone
+#
+# Use - for a field you leave out. Names of motions differ between BMLs (a walk is not always called "walk"): look
+# them up in the BML (the Caelum Modkit lists a BML's models and motions). Some creature BMLs only load inside a
+# battle; Caelum reports those in its log and shows nothing. The files come from the disc or a server modpack
+# listed in caelum-modpacks.txt.
+#
+# name    model                   part                  idle                    walk    scale  who
+sonic     bm_obj_city_sonic.bml   re_b_sonic_body.nj    wait_sonic_body.njm     -       60     everyone
+eggman    bm_obj_city_sonic.bml   re_b_eggman_body.nj   wait_eggman_body.njm    -       50     moderator

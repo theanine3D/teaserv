@@ -1,0 +1,14 @@
+{
+  "id": "daily-reward",
+  "version": "0.1.0",
+  "api_version": 1,
+  "entry": "main.lua",
+  "permissions": ["events", "players.store", "economy.meseta", "chat.reply"],
+  "dependencies": [],
+  "settings": {
+    "meseta_per_day": {"type": "integer", "default": 1000, "min": 1, "max": 1000000},
+    "streak_bonus": {"type": "integer", "default": 0, "min": 0, "max": 1000000},
+    "streak_max_days": {"type": "integer", "default": 7, "min": 1, "max": 365},
+    "message": {"type": "string", "default": "Daily login reward:", "max_bytes": 120}
+  }
+}

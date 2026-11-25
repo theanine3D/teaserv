@@ -52,7 +52,7 @@ The server must explicitly enable it and grant its requested permissions:
 
 IDs and command names are 1..64 lowercase ASCII letters, digits, hyphens, or underscores. IDs must match the manifest and directory. Entry paths must resolve inside the package directory and end in `.lua`. There are at most 16 enabled packages, 16 KiB per manifest, and 256 KiB per entry script. Initialization accepts Lua source only, not bytecode.
 
-Supported grants are `commands`, `commands.read`, `events`, `timers`, `storage`, `chat.reply`, `chat.broadcast`, `chat.whisper`, `chat.announce`, `scene.media`, `scene.event`, and `lobby.read`. The script receives only permissions both requested in its manifest and granted by the server. Unknown grants and missing requested grants reject activation. Dependencies are package IDs, must appear earlier in the configured `Packages` list, and must load successfully. API compatibility currently requires `api_version: 1` exactly; package version strings are informational, with no semantic-version dependency solver yet.
+Supported grants are `commands`, `commands.read`, `events`, `timers`, `storage`, `chat.reply`, `chat.broadcast`, `chat.whisper`, `chat.announce`, `scene.media`, `scene.event`, `lobby.read`, `schedule`, `players.store`, `boards`, `economy.meseta`, and `caelum.scene` (objects and music in Caelum-only lobbies, see [Caelum extension channel](CAELUM_EXT.md)). The last four, the wall clock (`extensions.now`), stable player keys and the `ep3_battle_ended` event are described in [clock, schedules, player data and Meseta](EXTENSIONS-PLAYERS.md). The script receives only permissions both requested in its manifest and granted by the server. Unknown grants and missing requested grants reject activation. Dependencies are package IDs, must appear earlier in the configured `Packages` list, and must load successfully. API compatibility currently requires `api_version: 1` exactly; package version strings are informational, with no semantic-version dependency solver yet.
 
 Initialization registers commands, event handlers, and optionally a storage migration. Initialization may read its validated settings. Ordinary initialization cannot send messages, access storage, log, or schedule timers. A required migration subsequently runs with access to the staged package's string store and read-only settings, as described below. Registration conflicts with built-in commands, other enabled packages, or duplicate commands reject activation. Missing/invalid packages reject the entire candidate configuration; a failed reload preserves the previous active set.
 
@@ -88,6 +88,13 @@ end)
 ```
 
 Types are strict `boolean`, `integer` (exact signed 64-bit), and `string`. There is no coercion of strings, floats, or numbers to another type; JSON null, arrays, and objects are not setting values. Optional `default` must match the type and bounds even when overridden. `required: true` requires either an override or a default. An omitted optional value without a default returns nil; an undeclared name is a script error. False, zero, and empty strings remain valid explicit values.
+
+A package can also ship text data files, such as a list of choices that is easier to edit than a setting: list them in
+the manifest as `"data_files": ["pets.txt"]` and read them with `extensions.package_text("pets.txt")`. Names are 1..64
+characters of lowercase ASCII letters, digits, `_`, `-` and `.`, end in `.txt`, contain no folders and do not start with
+a dot; at most 16 files, 64 KiB each and 256 KiB together, without NUL bytes. The files are read when the package is
+staged, so `extensions reload` picks up an edit; a listed file that is missing, too large or outside the package folder
+fails staging and keeps the active set. Scripts still have no filesystem access.
 
 Only integer definitions accept `min`/`max`, inclusive, defaulting to the full signed 64-bit range. Only string definitions accept `max_bytes`, 1..1024, default 1024. Empty strings are allowed; embedded NUL is refused. Unknown schema options, inapplicable constraints, invalid defaults, reversed bounds, or undeclared overrides reject staging. Names use the same 1..64 lowercase ASCII letter/digit/hyphen/underscore rules as package IDs. At most 64 settings are declared per package, with a combined 16 KiB allowance for names and resolved values (booleans/integers count as eight bytes each); the existing 16 KiB manifest limit also applies.
 
@@ -136,15 +143,18 @@ Tokens are separated by ASCII spaces and tabs. There is no quoting, escaping, pa
 
 ### Permissions and actions
 
-Command permissions are `everyone` (default), `announce`, `debug`, `moderator`, `root`, or `change-event`. These map to Newserv account flags; composite permissions require the complete flag mask. The command never inherits the shell's permission-bypass mode. Extension grants and the invoking player's permission are separate requirements. Muted users and clients without chat-command access cannot invoke messaging actions. Cooldowns are per command/session, default to 1000 ms, and accept 0..3600000 ms. Unloading/reloading clears cooldowns; disabling should be an administrator action.
+Command permissions are `everyone` (default), `announce`, `debug`, `moderator`, `admin`, `root`, or `change-event`. These map to Newserv account flags (`moderator`: MODERATOR, `admin`: ADMINISTRATOR, `root`: ROOT; an account with a higher role also holds the lower ones); composite permissions require the complete flag mask. The command never inherits the shell's permission-bypass mode. Extension grants and the invoking player's permission are separate requirements. Muted users and clients without chat-command access cannot invoke messaging actions. Cooldowns are per command/session, default to 1000 ms, and accept 0..3600000 ms. Unloading/reloading clears cooldowns; disabling should be an administrator action.
 
 Command options may also declare `help = "A short description"`. Help is optional, at most 160 bytes, and must be a string without NUL, ASCII controls, or DEL. It appears with permission, cooldown, and generated usage in the administrator's `extensions info ID` output. It does not change dispatch, permissions, or player-visible argument-error replies. The shipped shout/whisper examples include descriptions.
 
 | Function | Behavior |
 | --- | --- |
 | `extensions.lobby()` | Return a fresh snapshot of the caller's lobby/game and its connected local players, or nil if unavailable. Requires `lobby.read` and a live authorized callback; unavailable in initialization/migration. |
+| `extensions.position()` | Return the caller's own position as the server last heard it: `{x, y, z, floor, is_game}` plus `lobby_number` and `lobby_name` in a public lobby, or nil if unavailable. Same rules as `extensions.lobby()`. Y is updated when the player stops walking. |
 | `extensions.commands()` | Return a fresh sorted array of active extension commands the caller may use, or nil if unavailable. Requires `commands.read`; no arguments. See command discovery below. |
 | `extensions.setting(name)` | Read a declared, validated package setting as a boolean, integer, string, or nil. Available during initialization and callbacks without a grant. |
+| `extensions.has_permission(level)` | Whether the player of this callback holds a permission level (`everyone`, `announce`, `debug`, `moderator`, `admin`, `root`, `change-event`, the levels of command permissions), for example to offer some choices to moderators only. false for a departed or unauthorized player; needs a player context, no grant. |
+| `extensions.package_text(name)` | Read one of the package's own data files (manifest `data_files`) as a string, or nil for a name the manifest does not list. Available during initialization and callbacks without a grant; shares the API budget. |
 | `extensions.command(name, options, handler)` | Register a command during initialization. Up to 32 commands per package. |
 | `extensions.on(event, handler)` | Register a supported event. Player/session/join-readiness handlers receive `(ctx, event_name)`, with nil parsed arguments; package lifecycle, primary-game and quest observation handlers receive one metadata table as described below. Requires `events`; up to 32 handlers total per package. |
 | `extensions.reply(text)` | Send plain text to the invoking player, using `chat.reply`. |
@@ -264,7 +274,7 @@ Every call consumes one of the existing 32 callback API operations and returns c
 
 A missing/unauthorized live context returns nil without a script fault, including stale lobby-leave callbacks and read-only `client_login`/`client_disconnect`/`game_join_ready` observations. These read-only observations never query the adapter, even if Lua changes `ctx.can_act`. Initialization and migration attempts, or calls without the grant, are script errors. A grant authorizes reading within a valid scope; it does not bypass command permissions, mute restrictions, or proxy/replay exclusions.
 
-The optional `lobby-tools` package implements `$who` (or `/who` with that configured prefix), listing connected session IDs for chat-tools' whisper command. Append this entry to your existing `Extensions.Packages`, then run the normal `reload config`, `extensions check`, `extensions reload` sequence:
+The optional `lobby-tools` package implements `$who` (or `/who` with that configured prefix), listing connected session IDs for chat-tools' whisper command, and `$xyz`, which shows the caller their own X, Y, Z position (one decimal place) and lobby name and number, for placing concert performers and other Caelum lobby objects. Stock `$where` shows only whole X and Z. Append this entry to your existing `Extensions.Packages`, then run the normal `reload config`, `extensions check`, `extensions reload` sequence:
 
 ```json
 {"id": "lobby-tools", "grants": ["commands", "chat.reply", "lobby.read"]}
@@ -533,7 +543,7 @@ Each package gets an independent Lua state with a 4 MiB Lua allocation limit. Ea
 
 The library environment omits filesystem/OS access, package/native loading, dynamic compilation, debug/coroutines, protected script calls, and metatable manipulation. It also removes Lua pattern matching, `string.rep`, `table.move`, and `table.sort`, whose native loops could evade instruction-hook accounting. Basic, math, UTF-8, and the remaining string/table functions are available. This is a deliberately restricted Lua API, not unrestricted Lua compatibility.
 
-Errors are contained at the script boundary and logged; command failures receive a short reply. After three callback failures, the package is faulted and its pending timers are removed. A successful staged reload creates a fresh instance; lifecycle errors can still fault that instance during activation. Faulted packages retain their command names until unloaded/replaced. Successful actions before an error are not rolled back. Resource restrictions reduce mistakes; in-process Lua is not process-level isolation against hostile native code or vulnerabilities. Install only administrator-trusted extensions. There is no raw packet, shell, arbitrary client patch, character mutation, or general network API.
+Errors are contained at the script boundary and logged; command failures receive a short reply. After three callback failures, the package is faulted and its pending timers are removed. A successful staged reload creates a fresh instance; lifecycle errors can still fault that instance during activation. Faulted packages retain their command names until unloaded/replaced. Successful actions before an error are not rolled back. Resource restrictions reduce mistakes; in-process Lua is not process-level isolation against hostile native code or vulnerabilities. Install only administrator-trusted extensions. There is no raw packet, shell, arbitrary client patch, character mutation (other than the bounded [Episode 3 Meseta grant](EXTENSIONS-PLAYERS.md#episode-3-meseta)), or general network API.
 
 ## Administration and testing
 

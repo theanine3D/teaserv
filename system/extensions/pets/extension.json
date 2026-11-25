@@ -1,0 +1,14 @@
+{
+  "id": "pets",
+  "version": "0.3.0",
+  "api_version": 1,
+  "entry": "main.lua",
+  "permissions": ["commands", "chat.reply", "events", "lobby.read", "caelum.scene", "players.store"],
+  "dependencies": [],
+  "data_files": ["pets.txt"],
+  "settings": {
+    "choices": {"type": "string", "max_bytes": 1024, "default": ""},
+    "side": {"type": "integer", "default": 9, "min": -100, "max": 100},
+    "behind": {"type": "integer", "default": 6, "min": -100, "max": 100}
+  }
+}

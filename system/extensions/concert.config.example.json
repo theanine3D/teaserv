@@ -1,0 +1,40 @@
+{
+  "Extensions": {
+    "Enabled": true,
+    "TimeZone": "local",
+    "Packages": [
+      {
+        "id": "concert",
+        "grants": [
+          "commands",
+          "events",
+          "schedule",
+          "storage",
+          "caelum.scene",
+          "chat.announce",
+          "chat.reply"
+        ],
+        "Settings": {
+          "lobby": "20",
+          "weekday": 6,
+          "hour": 20,
+          "minute": 0,
+          "duration_minutes": 12,
+          "prefetch_minutes": 5,
+          "warn_first_minutes": 15,
+          "warn_second_minutes": 5,
+          "model": "concert_singer.bml",
+          "model_part": "singer_body.gj",
+          "motion": "sing.njm",
+          "music": "concert_song.adx",
+          "x": 0,
+          "y": 0,
+          "z": -60,
+          "rot_y": 180,
+          "scale_percent": 100,
+          "announce": "A concert is starting in the concert lobby!"
+        }
+      }
+    ]
+  }
+}

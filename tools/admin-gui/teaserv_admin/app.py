@@ -12,8 +12,8 @@ from tkinter import messagebox
 from . import server, ui
 from .appsettings import AppSettings, IS_WINDOWS, guess_server_dir, default_settings_path
 
-MENU_START, MENU_STOP, MENU_RESTART, MENU_CONSOLE, MENU_SETTINGS, MENU_LOGS, MENU_STATS, MENU_QUIT, MENU_STATUS = \
-    range(1, 10)
+MENU_START, MENU_STOP, MENU_RESTART, MENU_CONSOLE, MENU_SETTINGS, MENU_LOGS, MENU_STATS, MENU_QUIT, MENU_STATUS, \
+    MENU_ACCOUNTS = range(1, 11)
 
 TRAY_ICON = {
     server.RUNNING: "running",
@@ -232,6 +232,7 @@ class App:
             (MENU_SETTINGS, "Settings", True, False),
             (MENU_LOGS, "Logs", True, False),
             (MENU_STATS, "Statistics", True, False),
+            (MENU_ACCOUNTS, "Accounts", True, False),
             None,
             (MENU_QUIT, "Quit", True, False),
         ])
@@ -245,6 +246,7 @@ class App:
                 MENU_CONSOLE: lambda: self.open_window("console"),
                 MENU_SETTINGS: lambda: self.open_window("settings"),
                 MENU_LOGS: lambda: self.open_window("logs"), MENU_STATS: lambda: self.open_window("stats"),
+                MENU_ACCOUNTS: lambda: self.open_window("accounts"),
                 MENU_QUIT: self.quit,
             }
             action = actions.get(value)
@@ -268,6 +270,8 @@ class App:
             from .logs_window import LogsWindow as Window
         elif name == "stats":
             from .stats_window import StatsWindow as Window
+        elif name == "accounts":
+            from .accounts_window import AccountsWindow as Window
         else:
             from .control_window import ControlWindow as Window
         window = Window(self)

@@ -298,6 +298,7 @@ std::deque<std::string> Manager::stage_config(bool activate, const std::string& 
   // editing config.json. Package manifests/scripts are always read from disk.
   if (activate) this->flush_storage();
   auto config = s->data->config_json->get("Extensions", phosg::JSON::dict());
+  if (activate) this->read_player_settings();
   std::map<std::string, std::unique_ptr<Runtime>> staged;
   std::map<std::string, std::set<std::string>> staged_dependencies;
   std::vector<std::string> staged_order;
@@ -331,7 +332,8 @@ std::deque<std::string> Manager::stage_config(bool activate, const std::string& 
           staged_dependencies[id].emplace(dependency->as_string());
         }
         static const std::set<std::string> known_grants{
-            "commands", "commands.read", "events", "timers", "storage", "chat.reply", "chat.broadcast", "chat.whisper", "chat.announce", "scene.media", "scene.event", "lobby.read"};
+            "commands", "commands.read", "events", "timers", "storage", "chat.reply", "chat.broadcast", "chat.whisper", "chat.announce", "scene.media", "scene.event", "lobby.read",
+            "schedule", "players.store", "boards", "economy.meseta", "caelum.scene"};
         std::set<std::string> grants;
         for (const auto& grant : entry->at("grants").as_list()) {
           auto name = grant->as_string();
@@ -431,6 +433,24 @@ std::deque<std::string> Manager::stage_config(bool activate, const std::string& 
         Package package{id, manifest.at("version").as_string(), read_bounded(source_path, Runtime::MAX_SOURCE_BYTES),
             std::move(requested), std::move(stored.values), stored.version, static_cast<uint32_t>(target_version),
             read_settings(manifest, *entry)};
+        // "data_files": text files in the package folder the script reads with extensions.package_text (a list of
+        // pets, say). Read now, so "extensions reload" picks up an edit; a listed file that is missing fails staging.
+        auto data_files = manifest.get("data_files", phosg::JSON::list());
+        if (!data_files.is_list() || data_files.as_list().size() > Runtime::MAX_DATA_FILES) {
+          throw std::runtime_error("data_files must be a list of at most 16 file names");
+        }
+        size_t data_bytes = 0;
+        for (const auto& item : data_files.as_list()) {
+          if (!item->is_string() || !Runtime::valid_data_file_name(item->as_string())) {
+            throw std::runtime_error("data file names are a-z 0-9 _ - . ending in .txt, without folders");
+          }
+          const auto& name = item->as_string();
+          if (package.data_files.count(name)) throw std::runtime_error("data file listed twice: " + name);
+          auto text = read_bounded(contained_path(root, name), Runtime::MAX_DATA_FILE_BYTES);
+          if (text.find('\0') != std::string::npos) throw std::runtime_error("data file is not text: " + name);
+          if ((data_bytes += text.size()) > Runtime::MAX_DATA_BYTES) throw std::runtime_error("data files over 256 KiB together");
+          package.data_files.emplace(name, std::move(text));
+        }
         if (package.version.empty() || package.version.size() > 64) {
           throw std::runtime_error("invalid extension version");
         }
@@ -519,6 +539,8 @@ std::deque<std::string> Manager::describe() const {
   }
   lines.emplace_back(std::format("Native scenes: {}, {} owned media objects; experimental models: {}",
       this->scenes_enabled ? "enabled" : "disabled", this->scenes.object_count(), this->experimental_models ? "enabled" : "disabled"));
+  for (auto& line : this->economy_info()) lines.emplace_back(std::move(line));
+  lines.emplace_back(this->caelum_info());
   if (!this->last_reload_error.empty()) lines.emplace_back("Last reload failure: " + this->last_reload_error);
   if (!this->last_check_error.empty()) lines.emplace_back("Last check failure: " + this->last_check_error);
   return lines;
@@ -594,13 +616,15 @@ std::deque<std::string> Manager::scene_info(const std::string& id) const {
     lines.emplace_back(std::format("Event override: lobby={} previous={} applied={}",
         event.lobby_id, event.previous, event.applied));
   }
+  for (auto& line : this->caelum.describe(id)) lines.emplace_back(std::move(line));
   return lines;
 }
 
 Context Manager::context_for(std::shared_ptr<Client> client, std::shared_ptr<Lobby> lobby) const {
   std::string name = client->login ? client->login->account->last_player_name : "";
   return {client->id, lobby ? lobby->lobby_id : 0, std::move(name), "everyone",
-      phosg::name_for_enum(client->version()), lobby && lobby->is_game(), true};
+      phosg::name_for_enum(client->version()), lobby && lobby->is_game(), true,
+      const_cast<Manager*>(this)->player_key_for(client)};
 }
 
 std::shared_ptr<Client> Manager::live_client(const Context& context) const {
@@ -644,6 +668,8 @@ bool Manager::authorized(const Context& context) const {
     mask = static_cast<uint32_t>(Account::Flag::DEBUG);
   } else if (context.permission == "moderator") {
     mask = static_cast<uint32_t>(Account::Flag::MODERATOR);
+  } else if (context.permission == "admin") {
+    mask = static_cast<uint32_t>(Account::Flag::ADMINISTRATOR);
   } else if (context.permission == "root") {
     mask = static_cast<uint32_t>(Account::Flag::ROOT);
   } else if (context.permission == "change-event") {
@@ -784,6 +810,7 @@ bool Manager::dispatch(std::shared_ptr<Client> c, const std::string& name, const
 
 void Manager::lobby_event(const std::string& event, std::shared_ptr<Client> client, std::shared_ptr<Lobby> lobby) {
   if (event == "lobby_leave" && lobby) this->games.member_left(lobby->lobby_id, client->id);
+  if (event == "lobby_leave") this->caelum_detach(client->id); // a hat or pet leaves with its player
   if (client->proxy_session || !client->login) {
     return;
   }
@@ -796,6 +823,10 @@ void Manager::lobby_event(const std::string& event, std::shared_ptr<Client> clie
   }
   auto context = this->context_for(client, lobby);
   this->sessions.observe(context);
+  if (event == "lobby_join") {
+    this->deliver_login_notices(client, lobby);
+    this->caelum_send_snapshot(client, lobby); // Every room change replaces the client's extension objects.
+  }
   for (auto& [id, runtime] : this->packages) {
     try {
       runtime->cancel_client(client->id);
@@ -934,6 +965,9 @@ void Manager::emit_game_event(const std::string& event, const GameSnapshot& snap
 void Manager::disconnected(uint64_t client_id) {
   this->games.forget_client(client_id);
   this->scenes.forget_client(client_id);
+  this->login_notices.erase(client_id);
+  this->caelum_peers.erase(client_id);
+  this->caelum_detach(client_id);
   for (auto& [id, runtime] : this->packages) {
     (void)id;
     runtime->cancel_client(client_id);
@@ -950,6 +984,11 @@ void Manager::client_logged_in(std::shared_ptr<Client> client) {
       client->server_behavior != ServerBehavior::GAME_SERVER || is_patch(client->version()) ||
       client->version() == Version::UNKNOWN || (is_v4(client->version()) && client->bb_connection_phase < 4)) {
     return;
+  }
+  try {
+    this->player_logged_in(client); // Before upstream's login B7, so a queued grant arrives with it.
+  } catch (const std::exception& e) {
+    this->log("players", e.what());
   }
   auto context = this->context_for(client, nullptr);
   context.allow_player_actions = false;
@@ -993,6 +1032,12 @@ void Manager::flush_storage() {
         failures += id + ": " + e.what();
       }
     }
+  }
+  try {
+    this->flush_players();
+  } catch (const std::exception& e) {
+    if (!failures.empty()) failures += "; ";
+    failures += std::string("player data: ") + e.what();
   }
   if (!failures.empty()) {
     throw std::runtime_error("extension storage flush failed: " + failures);
@@ -1133,6 +1178,7 @@ void Manager::cleanup_scene_owner(const std::string& owner) {
   }
   auto affected = this->scenes.remove_owner(owner);
   this->dirty_scene_lobbies.insert(affected.begin(), affected.end());
+  this->caelum_cleanup_owner(owner);
 }
 
 SceneCapabilities Manager::scene_capabilities(const Context& context) const {
@@ -1235,6 +1281,11 @@ void Manager::schedule_tick() {
       if (std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(10)) {
         break;
       }
+    }
+    try {
+      manager->run_schedules();
+    } catch (const std::exception& e) {
+      manager->log("schedules", e.what());
     }
     manager->flush_scene_updates();
     // Coalesce small storage writes; persist explicitly before reload/unload.

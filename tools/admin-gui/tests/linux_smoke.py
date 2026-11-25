@@ -81,7 +81,7 @@ def main():
         check("console: command reply shown", True)
         shot(console, "console")
         console.close()
-        for name in ("settings", "logs", "stats"):
+        for name in ("settings", "logs", "stats", "accounts"):
             window = app.open_window(name)
             yield 500
             shot(window, name)

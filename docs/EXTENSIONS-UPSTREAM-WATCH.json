@@ -12,7 +12,7 @@
     "src/ServerState.hh": "Preserve guarded manager ownership and server/lobby identity contracts.",
     "src/ChatCommands.cc": "Preserve built-in precedence, normalization, command reservations, and permissions.",
     "src/ChatCommands.hh": "Review built-in lookup and extension dispatch boundary.",
-    "src/ReceiveCommands.cc": "Review authentication/phase, media marker reset, readiness hooks, proxy handoff, and disconnect order; E3/02 modpack offer, F2 gate and 84 join check. Teaserv Admin: note_battle_started in on_DC_Ep3, only on the flag's clear-to-set change.",
+    "src/ReceiveCommands.cc": "Review authentication/phase, media marker reset, readiness hooks, proxy handoff, and disconnect order; E3/02 modpack offer, F2 gate and 84 join check. Teaserv Admin: note_battle_started in on_DC_Ep3, only on the flag's clear-to-set change. Extensions: ep3_battle_ended observation in on_CA_Ep3 after on_server_data_input; client_logged_in must stay before the login B7 (queued Meseta). Caelum extension channel: F2 flags 0x20-0x2F in on_F2_Ep3 go to Manager::caelum_ext_message; the server sends 0x21-0x23 only after the client's HELLO.",
     "src/ReceiveSubcommands.cc": "Preserve own-slot visibility validation and late-join observation ordering.",
     "src/Client.hh": "Review session identity, lobby membership, loading flags, and connection-local media profile; caelum_mod_* connection flags.",
     "src/Client.cc": "Review client lifetime, authentication, and session identity assumptions. Teaserv Admin: note_login beside the PLAYER_LOGIN event in set_login.",

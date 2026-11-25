@@ -1,0 +1,28 @@
+{
+  "id": "concert",
+  "version": "0.2.0",
+  "api_version": 1,
+  "entry": "main.lua",
+  "permissions": ["commands", "events", "schedule", "storage", "caelum.scene", "chat.announce", "chat.reply"],
+  "dependencies": [],
+  "settings": {
+    "lobby": {"type": "string", "default": "20", "max_bytes": 32},
+    "weekday": {"type": "integer", "default": 6, "min": 0, "max": 7},
+    "hour": {"type": "integer", "default": 20, "min": 0, "max": 23},
+    "minute": {"type": "integer", "default": 0, "min": 0, "max": 59},
+    "duration_minutes": {"type": "integer", "default": 12, "min": 1, "max": 120},
+    "prefetch_minutes": {"type": "integer", "default": 5, "min": 0, "max": 60},
+    "warn_first_minutes": {"type": "integer", "default": 15, "min": 0, "max": 1440},
+    "warn_second_minutes": {"type": "integer", "default": 5, "min": 0, "max": 1440},
+    "model": {"type": "string", "required": true, "max_bytes": 47},
+    "model_part": {"type": "string", "default": "", "max_bytes": 47},
+    "motion": {"type": "string", "default": "", "max_bytes": 47},
+    "music": {"type": "string", "default": "", "max_bytes": 47},
+    "x": {"type": "integer", "default": 0, "min": -100000, "max": 100000},
+    "y": {"type": "integer", "default": 0, "min": -100000, "max": 100000},
+    "z": {"type": "integer", "default": 0, "min": -100000, "max": 100000},
+    "rot_y": {"type": "integer", "default": 0, "min": -360, "max": 360},
+    "scale_percent": {"type": "integer", "default": 100, "min": 1, "max": 10000},
+    "announce": {"type": "string", "default": "A concert is starting in the concert lobby!", "max_bytes": 200}
+  }
+}

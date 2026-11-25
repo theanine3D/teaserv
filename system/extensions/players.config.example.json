@@ -1,0 +1,35 @@
+{
+  "Extensions": {
+    "Enabled": true,
+    "TimeZone": "local",
+    "Economy": {
+      "MaxGrant": 100000,
+      "DailyLimitPerPackage": 10000000,
+      "BalanceCap": 9999999
+    },
+    "Packages": [
+      {
+        "id": "daily-reward",
+        "grants": ["events", "players.store", "economy.meseta", "chat.reply"],
+        "Settings": {
+          "meseta_per_day": 1000,
+          "streak_bonus": 0,
+          "streak_max_days": 7,
+          "message": "Daily login reward:"
+        }
+      },
+      {
+        "id": "player-of-the-period",
+        "grants": ["commands", "events", "schedule", "storage", "players.store", "boards", "economy.meseta", "chat.announce", "chat.reply"],
+        "Settings": {
+          "period": "week",
+          "prize": 100000,
+          "count_com_wins": false,
+          "min_rounds": 3,
+          "max_wins_per_day": 20,
+          "title": "Player of the Week"
+        }
+      }
+    ]
+  }
+}

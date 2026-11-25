@@ -1,0 +1,12 @@
+{
+  "id": "wearhat",
+  "version": "0.2.0",
+  "api_version": 1,
+  "entry": "main.lua",
+  "permissions": ["commands", "chat.reply", "events", "lobby.read", "caelum.scene", "players.store"],
+  "dependencies": [],
+  "data_files": ["hats.txt"],
+  "settings": {
+    "choices": {"type": "string", "max_bytes": 1024, "default": ""}
+  }
+}

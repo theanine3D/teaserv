@@ -60,7 +60,7 @@ The icon is a disc with a T. Its colour shows the server state, and the tooltip 
 | Red | The server stopped with an error |
 
 Right-click the icon for the menu: **Start**, **Stop**, **Restart the server**, **View console**, **Settings**,
-**Logs**, **Statistics**, **Quit**. A left click opens the small status window with the same actions as buttons.
+**Logs**, **Statistics**, **Accounts**, **Quit**. A left click opens the small status window with the same actions as buttons.
 Its **Always On Top** box (right of Restart) keeps that window above all other windows; the choice is remembered.
 
 ## Start, stop and restart
@@ -255,6 +255,32 @@ What is counted, and how:
 Not counted: quests started (non-Episode 3), chat, trades, time played per player, and anything per account. Numbers
 between the last recorded line and a crash are lost (at most one interval); a normal stop writes a final line.
 
+## Accounts
+
+The player accounts of the server: account number (also the Guild Card number), last player name, role, logins (the
+GameCube serial number or Blue Burst user name; passwords and access keys are never shown) and any ban. The list is
+read from `system/licenses/` in the server folder, so it is shown while the server is stopped too; **Refresh** reads
+it again.
+
+- **Register account...** makes an account with one login: a GameCube (Episode 3) serial number, access key and
+  password, as the player types them into the game, or a Blue Burst user name and password. Choose its role at once.
+  A serial number or user name that another account already has is refused.
+- **Role of the selected account** and **Set role**: Player, Moderator, Administrator or Root. Moderators can kick,
+  ban and silence; Administrators also change lobby events, announce and join any game; Root can use every command,
+  including debugging and cheats anywhere (asked to confirm). The role replaces the account's permission flags; a
+  shared-serial account stays shared.
+- **Delete...** removes an account for good (asked to confirm). A player online with it stays connected until they
+  leave.
+
+Players who connect while the server allows unregistered users get an account by themselves; find them by their
+last player name and give them a role here. Changes need the running server: the window sends the server's own
+commands (`add-account`, `add-license`, `update-account`, `delete-account`), the server checks and saves them, and
+they apply at once. Its answer is shown under the list, and a refusal (`FAILED: ...`) says why. The console and the log
+show these commands with the password and access key replaced by stars.
+
+The roles are also the permission levels of extension commands (`moderator`, `admin`, `root`) and of the `who`
+column of the pets and wearhat lists (see CAELUM_EXT.md).
+
 ## Linux
 
 The windows (status, console, settings, logs, statistics) and the server control work on Linux with Python 3.9+ and
@@ -308,6 +334,7 @@ program says so.
 | `teaserv_admin/field_editors.py`, `settings_window.py` | Settings window |
 | `teaserv_admin/caelum_files.py` | Reading, checking and writing the Caelum text files |
 | `teaserv_admin/lobby_media.py` | The lobby media list and the server's checks for its files (sizes, PRS, BMP to GVM) |
+| `teaserv_admin/accounts_window.py` | Accounts window: reading `system/licenses`, roles, the commands it sends |
 | `teaserv_admin/console_window.py`, `logs_window.py`, `stats_window.py`, `control_window.py` | The other windows |
 | `teaserv_admin/stats.py` | Reading `system/stats` and grouping it for the graphs |
 | `build_exe.py` | One-file build with PyInstaller |

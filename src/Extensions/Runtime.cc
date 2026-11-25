@@ -1,5 +1,6 @@
 #include "Runtime.hh"
 #include "MessageText.hh"
+#include "../CaelumExt.h"
 
 extern "C" {
 #include <lauxlib.h>
@@ -9,6 +10,7 @@ extern "C" {
 
 #include <algorithm>
 #include <charconv>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -38,11 +40,86 @@ bool valid_name(const std::string& name) {
   });
 }
 
+// Runs inside a protected call. Holds no C++ objects with destructors.
+void push_info(lua_State* L, const InfoTable& info) {
+  lua_createtable(L, 0, static_cast<int>(info.keys.size()));
+  for (size_t z = 0; z < info.keys.size(); z++) {
+    const auto& value = info.values[z].value;
+    if (const auto* b = std::get_if<bool>(&value)) {
+      lua_pushboolean(L, *b);
+    } else if (const auto* i = std::get_if<int64_t>(&value)) {
+      lua_pushinteger(L, *i);
+    } else if (const auto* text = std::get_if<std::string>(&value)) {
+      lua_pushlstring(L, text->data(), text->size());
+    } else {
+      const auto& list = std::get<std::vector<InfoTable>>(value);
+      lua_createtable(L, static_cast<int>(list.size()), 0);
+      for (size_t y = 0; y < list.size(); y++) {
+        push_info(L, list[y]);
+        lua_rawseti(L, -2, static_cast<lua_Integer>(y + 1));
+      }
+    }
+    lua_setfield(L, -2, info.keys[z].c_str());
+  }
+}
+
+void validate_info(const InfoTable& info, size_t depth, size_t& budget) {
+  if (depth > 4 || info.keys.size() != info.values.size() || info.keys.size() > 32) {
+    throw std::runtime_error("event metadata is too deep or too large");
+  }
+  for (size_t z = 0; z < info.keys.size(); z++) {
+    if (info.keys[z].empty() || info.keys[z].size() > 32 || info.keys[z].find('\0') != std::string::npos || !budget--) {
+      throw std::runtime_error("invalid event metadata");
+    }
+    if (const auto* text = std::get_if<std::string>(&info.values[z].value)) {
+      if (text->size() > 256) throw std::runtime_error("event metadata text is too long");
+    } else if (const auto* list = std::get_if<std::vector<InfoTable>>(&info.values[z].value)) {
+      if (list->size() > 16) throw std::runtime_error("event metadata list is too long");
+      for (const auto& item : *list) validate_info(item, depth + 1, budget);
+    }
+  }
+}
+
+// Reads an integer or a dense array of integers from a schedule field.
+std::set<int> schedule_field(lua_State* L, int spec, const char* key) {
+  std::set<int> result;
+  lua_pushstring(L, key);
+  lua_rawget(L, spec);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    return result;
+  }
+  auto add = [&](int index) {
+    if (!lua_isinteger(L, index)) throw std::runtime_error("schedule fields must be integers or arrays of integers");
+    lua_Integer value = lua_tointeger(L, index);
+    if (value < -1000 || value > 1000) throw std::runtime_error("schedule field is out of range");
+    result.emplace(static_cast<int>(value));
+  };
+  if (lua_type(L, -1) == LUA_TTABLE) {
+    size_t count = lua_rawlen(L, -1);
+    if (!count || count > 60) throw std::runtime_error("schedule arrays must have 1..60 entries");
+    for (size_t z = 1; z <= count; z++) {
+      lua_rawgeti(L, -1, static_cast<lua_Integer>(z));
+      add(-1);
+      lua_pop(L, 1);
+    }
+  } else {
+    add(-1);
+  }
+  lua_pop(L, 1);
+  return result;
+}
+
 bool valid_permission(const std::string& name) {
-  return name == "everyone" || name == "announce" || name == "debug" || name == "moderator" || name == "root" || name == "change-event";
+  return name == "everyone" || name == "announce" || name == "debug" || name == "moderator" || name == "admin" || name == "root" ||
+      name == "change-event";
 }
 
 } // namespace
+
+ClockTime Host::now() const {
+  return clock_time(static_cast<int64_t>(std::time(nullptr)), 0);
+}
 
 Runtime::Runtime(Host& host, Package package) : host(host), package(std::move(package)) {
   if (!valid_name(this->package.id) || this->package.source.size() > MAX_SOURCE_BYTES) {
@@ -50,6 +127,16 @@ Runtime::Runtime(Host& host, Package package) : host(host), package(std::move(pa
   }
   this->validate_storage();
   validate_settings(this->package.settings);
+  size_t data_bytes = 0;
+  for (const auto& [name, text] : this->package.data_files) {
+    data_bytes += text.size();
+    if (!valid_data_file_name(name) || text.size() > MAX_DATA_FILE_BYTES || text.find('\0') != std::string::npos) {
+      throw std::runtime_error("invalid package data file " + name);
+    }
+  }
+  if (this->package.data_files.size() > MAX_DATA_FILES || data_bytes > MAX_DATA_BYTES) {
+    throw std::runtime_error("too many or too large package data files");
+  }
   if (this->package.storage_version > this->package.target_storage_version ||
       this->package.target_storage_version > MAX_STORAGE_VERSION) {
     throw std::runtime_error("extension storage version downgrade or invalid target version");
@@ -89,6 +176,7 @@ const std::string& Runtime::version() const { return this->package.version; }
 bool Runtime::enabled() const { return this->active; }
 size_t Runtime::memory_bytes() const { return this->allocated; }
 size_t Runtime::timer_count() const { return this->timers.size(); }
+size_t Runtime::schedule_count() const { return this->schedules.size(); }
 const std::map<std::string, std::string>& Runtime::storage() const { return this->package.storage; }
 bool Runtime::storage_dirty() const { return this->dirty; }
 uint32_t Runtime::storage_version() const { return this->package.storage_version; }
@@ -170,7 +258,8 @@ bool Runtime::dispatch(const std::string& name, const std::string& args, Context
 
 void Runtime::emit(const std::string& event, Context context) {
   if (event == "package_load" || event == "package_unload" || event == "game_opened" || event == "game_closed" ||
-      event == "quest_assigned" || event == "quest_map_loaded" || event == "quest_load_acknowledged" || event == "quest_join_acknowledged") return;
+      event == "quest_assigned" || event == "quest_map_loaded" || event == "quest_load_acknowledged" || event == "quest_join_acknowledged" ||
+      event == "ep3_battle_ended") return;
   if (event == "game_join_ready" && (!context.client_id || context.lobby_id <= 0 || !context.is_game)) return;
   if (event == "client_login" || event == "client_disconnect" || event == "game_join_ready") {
     context.allow_player_actions = false;
@@ -227,6 +316,47 @@ void Runtime::emit_game_observation(const std::string& event, const GameSnapshot
   }
   this->current_game = nullptr;
   this->current_quest_acknowledgement = nullptr;
+}
+
+void Runtime::call_info(int ref, const std::string& event, const InfoTable& info) {
+  Context context;
+  context.allow_player_actions = false;
+  this->current_info = &info;
+  try {
+    this->call(ref, context, event, nullptr, true);
+  } catch (...) {
+    this->current_info = nullptr;
+    throw;
+  }
+  this->current_info = nullptr;
+}
+
+void Runtime::emit_info(const std::string& event, const InfoTable& info) {
+  if (event != "ep3_battle_ended") throw std::runtime_error("unsupported metadata event");
+  size_t budget = 256;
+  validate_info(info, 0, budget);
+  auto it = this->events.find(event);
+  if (this->staging || !this->active || it == this->events.end()) return;
+  auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(10);
+  for (int ref : it->second) {
+    if (!this->active || std::chrono::steady_clock::now() >= end) break;
+    this->call_info(ref, event, info);
+  }
+}
+
+void Runtime::run_schedules(const ClockTime& time) {
+  if (this->staging || !this->active) return;
+  auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(10);
+  // Schedules are fixed after initialization, so indexes stay valid across Lua.
+  for (size_t z = 0; z < this->schedules.size(); z++) {
+    if (!this->active || std::chrono::steady_clock::now() >= end) break;
+    if (!this->schedules[z].spec.matches(time)) continue;
+    InfoTable info;
+    info.add("event", InfoValue{std::string("schedule")});
+    info.add("name", InfoValue{this->schedules[z].name});
+    info.add("utc", InfoValue{time.utc});
+    this->call_info(this->schedules[z].ref, "schedule", info);
+  }
 }
 
 void Runtime::emit_lifecycle(Lifecycle event, const std::string& reason) {
@@ -290,13 +420,13 @@ void Runtime::tick() {
   if (selected == this->timers.end()) return;
   const uint64_t id = selected->first;
   Timer timer = selected->second;
-  if (!this->active || !this->host.authorized(timer.context)) {
+  if (!this->active || (!timer.service && !this->host.authorized(timer.context))) {
     this->timers.erase(selected);
     luaL_unref(this->state, LUA_REGISTRYINDEX, timer.ref);
     return;
   }
   if (!timer.interval_ms) this->timers.erase(selected);
-  const bool succeeded = this->call(timer.ref, timer.context, "");
+  const bool succeeded = this->call(timer.ref, timer.context, "", nullptr, timer.service);
   if (!timer.interval_ms) {
     luaL_unref(this->state, LUA_REGISTRYINDEX, timer.ref);
     return;
@@ -315,7 +445,7 @@ void Runtime::tick() {
 
 void Runtime::cancel_client(uint64_t client_id) {
   for (auto it = this->timers.begin(); it != this->timers.end();) {
-    if (it->second.context.client_id == client_id) {
+    if (!it->second.service && it->second.context.client_id == client_id) {
       luaL_unref(this->state, LUA_REGISTRYINDEX, it->second.ref);
       it = this->timers.erase(it);
     } else {
@@ -402,6 +532,7 @@ bool Runtime::call(int ref, const Context& context, const std::string& args, con
   this->current_parsed_args = nullptr;
   this->current_lobby_view.reset();
   this->current_command_catalog.reset();
+  this->current_board_top.reset();
   const auto finished = std::chrono::steady_clock::now();
   this->last_callback_us = std::chrono::duration_cast<std::chrono::microseconds>(finished - started).count();
   this->peak_callback_us = std::max(this->peak_callback_us, this->last_callback_us);
@@ -498,6 +629,8 @@ int Runtime::initialize(lua_State* L) {
       {"storage_set", api<&Runtime::storage_set>},
       {"migrate", api<&Runtime::register_migration>},
       {"setting", api<&Runtime::setting>},
+      {"package_text", api<&Runtime::package_text>},
+      {"has_permission", api<&Runtime::has_permission>},
       {"lobby", api<&Runtime::lobby>},
       {"scene_capabilities", api<&Runtime::scene_capabilities>},
       {"scene_asset_support", api<&Runtime::scene_asset_support>},
@@ -505,6 +638,23 @@ int Runtime::initialize(lua_State* L) {
       {"scene_spawn", api<&Runtime::scene_spawn>},
       {"scene_remove", api<&Runtime::scene_remove>},
       {"scene_event", api<&Runtime::scene_event>},
+      {"now", api<&Runtime::now>},
+      {"schedule", api<&Runtime::schedule>},
+      {"service_after", api<&Runtime::service_after>},
+      {"player_get", api<&Runtime::player_get>},
+      {"player_set", api<&Runtime::player_set>},
+      {"board_add", api<&Runtime::board_add>},
+      {"board_get", api<&Runtime::board_get>},
+      {"board_top", api<&Runtime::board_top>},
+      {"board_reset", api<&Runtime::board_reset>},
+      {"meseta_grant", api<&Runtime::meseta_grant>},
+      {"caelum_object", api<&Runtime::caelum_object>},
+      {"caelum_remove", api<&Runtime::caelum_remove>},
+      {"caelum_music", api<&Runtime::caelum_music>},
+      {"caelum_clear", api<&Runtime::caelum_clear>},
+      {"caelum_listeners", api<&Runtime::caelum_listeners>},
+      {"caelum_lobby", api<&Runtime::caelum_lobby>},
+      {"position", api<&Runtime::position>},
       {nullptr, nullptr}};
   luaL_setfuncs(L, functions, 0);
   lua_setglobal(L, "extensions");
@@ -531,6 +681,11 @@ int Runtime::initialize(lua_State* L) {
 int Runtime::invoke(lua_State* L) {
   auto& runtime = self(L);
   lua_rawgeti(L, LUA_REGISTRYINDEX, runtime.current_ref);
+  if (runtime.current_info) {
+    push_info(L, *runtime.current_info);
+    lua_call(L, 1, 0);
+    return 0;
+  }
   if (runtime.current_game) {
     const auto& game = *runtime.current_game;
     lua_createtable(L, 0, runtime.current_quest_acknowledgement ? 11 : 9);
@@ -602,6 +757,10 @@ int Runtime::invoke(lua_State* L) {
   lua_setfield(L, -2, "is_game");
   lua_pushboolean(L, runtime.current_context->allow_player_actions);
   lua_setfield(L, -2, "can_act");
+  if (!runtime.current_context->player_key.empty()) {
+    lua_pushlstring(L, runtime.current_context->player_key.data(), runtime.current_context->player_key.size());
+    lua_setfield(L, -2, "player_key");
+  }
   lua_pushlstring(L, runtime.current_args->data(), runtime.current_args->size());
   if (runtime.current_parsed_args) {
     lua_newtable(L);
@@ -763,7 +922,7 @@ int Runtime::register_event(lua_State* L) {
           std::strcmp(name, "package_load") && std::strcmp(name, "package_unload") &&
           std::strcmp(name, "game_opened") && std::strcmp(name, "game_closed") &&
           std::strcmp(name, "quest_assigned") && std::strcmp(name, "quest_map_loaded") && std::strcmp(name, "quest_load_acknowledged") &&
-          std::strcmp(name, "quest_join_acknowledged"))) {
+          std::strcmp(name, "quest_join_acknowledged") && std::strcmp(name, "ep3_battle_ended"))) {
     throw std::runtime_error("on expects a supported event and an initialization-time function");
   }
   size_t count = 0;
@@ -811,13 +970,19 @@ int Runtime::schedule_timer(lua_State* L, bool repeating) {
 }
 
 int Runtime::cancel(lua_State* L) {
-  this->require_grant("timers");
-  this->require_context();
   if (!lua_isinteger(L, 1)) {
     throw std::runtime_error("cancel expects an integer timer ID");
   }
   auto it = this->timers.find(lua_tointeger(L, 1));
   bool found = it != this->timers.end();
+  if (found && it->second.service) {
+    // Service timers have no player; any callback of the owning package may cancel them.
+    this->require_grant("schedule");
+    this->require_context(false);
+  } else {
+    this->require_grant("timers");
+    this->require_context();
+  }
   if (found) {
     luaL_unref(L, LUA_REGISTRYINDEX, it->second.ref);
     this->timers.erase(it);
@@ -995,6 +1160,39 @@ int Runtime::command_list(lua_State* L) {
   return 1;
 }
 
+bool Runtime::valid_data_file_name(const std::string& name) {
+  if (name.size() < 5 || name.size() > 64 || name[0] == '.' || name.substr(name.size() - 4) != ".txt") return false;
+  for (char ch : name) {
+    if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '.')) return false;
+  }
+  return true;
+}
+
+int Runtime::has_permission(lua_State* L) {
+  // Whether the player of this callback holds a permission level (the same levels and account flags as a command's
+  // permission): for choices that only some players may use. false for a departed or unauthorized player.
+  this->require_context(false);
+  std::string level = string_arg(L, 1, 16);
+  if (!valid_permission(level)) {
+    throw std::runtime_error("permission must be everyone, announce, debug, moderator, admin, root or change-event");
+  }
+  Context copy = *this->current_context;
+  copy.permission = level;
+  lua_pushboolean(L, this->current_context->allow_player_actions && this->host.authorized(copy));
+  return 1;
+}
+
+int Runtime::package_text(lua_State* L) {
+  // A text file of this package (manifest "data_files"), read when the package was staged; nil for a name the
+  // manifest does not list. Available everywhere, initialization included; no grant (the package's own files).
+  if (++this->api_calls > 32) throw std::runtime_error("callback API call budget exceeded");
+  const char* name = string_arg(L, 1, 64);
+  auto it = this->package.data_files.find(name);
+  if (it == this->package.data_files.end()) lua_pushnil(L);
+  else lua_pushlstring(L, it->second.data(), it->second.size());
+  return 1;
+}
+
 int Runtime::setting(lua_State* L) {
   // Available during initialization and migration, without a player context.
   // Reads share the API budget; scalar copies cannot mutate host configuration.
@@ -1165,6 +1363,434 @@ int Runtime::scene_event(lua_State* L) {
     lua_pushnil(L);
   }
   return 2;
+}
+
+int Runtime::now(lua_State* L) {
+  // Available everywhere, including initialization. Shares the API budget.
+  if (++this->api_calls > 32) throw std::runtime_error("callback API call budget exceeded");
+  if (lua_gettop(L)) throw std::runtime_error("now expects no arguments");
+  const ClockTime t = this->host.now();
+  lua_createtable(L, 0, 13);
+  const std::pair<const char*, int64_t> fields[] = {
+      {"utc", t.utc}, {"offset_seconds", t.offset_seconds}, {"year", t.year}, {"month", t.month}, {"day", t.day},
+      {"hour", t.hour}, {"minute", t.minute}, {"second", t.second}, {"weekday", t.weekday}, {"yday", t.yday},
+      {"iso_year", t.iso_year}, {"iso_week", t.iso_week}, {"day_number", t.day_number}};
+  for (const auto& [name, value] : fields) {
+    lua_pushinteger(L, value);
+    lua_setfield(L, -2, name);
+  }
+  return 1;
+}
+
+int Runtime::schedule(lua_State* L) {
+  this->require_grant("schedule");
+  if (!this->staging || this->migrating || this->schedules.size() >= MAX_SCHEDULES) {
+    throw std::runtime_error("schedules must be registered during initialization (maximum 16)");
+  }
+  std::string name = string_arg(L, 1, 64);
+  if (!valid_name(name) || lua_type(L, 2) != LUA_TTABLE || lua_type(L, 3) != LUA_TFUNCTION) {
+    throw std::runtime_error("schedule expects a name, a rule table, and a function");
+  }
+  for (const auto& existing : this->schedules) {
+    if (existing.name == name) throw std::runtime_error("duplicate schedule name");
+  }
+  static const std::set<std::string> keys{"minute", "hour", "weekday", "day", "month", "every_minutes"};
+  lua_pushnil(L);
+  while (lua_next(L, 2)) {
+    if (lua_type(L, -2) != LUA_TSTRING || !keys.count(string_arg(L, -2, 32))) {
+      throw std::runtime_error("unknown schedule rule field");
+    }
+    lua_pop(L, 1);
+  }
+  ScheduleSpec spec;
+  spec.minutes = schedule_field(L, 2, "minute");
+  spec.hours = schedule_field(L, 2, "hour");
+  spec.weekdays = schedule_field(L, 2, "weekday");
+  spec.days = schedule_field(L, 2, "day");
+  spec.months = schedule_field(L, 2, "month");
+  auto every = schedule_field(L, 2, "every_minutes");
+  if (every.size() > 1) throw std::runtime_error("every_minutes must be one integer");
+  if (!every.empty()) {
+    if (*every.begin() < 1) throw std::runtime_error("schedule every_minutes must be 1..1440");
+    spec.every_minutes = *every.begin();
+  }
+  spec.validate();
+  lua_pushvalue(L, 3);
+  int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+  this->schedules.emplace_back(Schedule{std::move(name), std::move(spec), ref});
+  return 0;
+}
+
+int Runtime::service_after(lua_State* L) {
+  this->require_grant("schedule");
+  this->require_context(false);
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("service timers are unavailable during package unload");
+  lua_Integer ms = lua_tointeger(L, 1);
+  if (!lua_isinteger(L, 1) || ms < 50 || ms > MAX_SERVICE_TIMER_MS || lua_type(L, 2) != LUA_TFUNCTION) {
+    throw std::runtime_error("service_after expects 50..21600000 milliseconds and a function");
+  }
+  if (this->timers.size() >= MAX_TIMERS) {
+    lua_pushnil(L);
+    lua_pushliteral(L, "timer quota exceeded");
+    return 2;
+  }
+  lua_pushvalue(L, 2);
+  int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+  uint64_t id = this->next_timer_id++;
+  Context context;
+  context.allow_player_actions = false;
+  this->timers.emplace(id, Timer{ref, std::move(context), std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), 0, true});
+  lua_pushinteger(L, id);
+  return 1;
+}
+
+PlayerData& Runtime::require_player_data(const char* grant) {
+  this->require_grant(grant);
+  this->require_context(false);
+  auto* data = this->host.player_data(this->id());
+  if (!data) throw std::runtime_error("player data is unavailable");
+  return *data;
+}
+
+int Runtime::player_get(lua_State* L) {
+  auto& data = this->require_player_data("players.store");
+  const char* key = string_arg(L, 1, 25);
+  const char* name = string_arg(L, 2, PlayerData::MAX_KEY_BYTES);
+  // Copy into the Lua state before any further C++ object is created: lua_pushlstring can raise.
+  const std::string* found = nullptr;
+  if (!valid_player_key(key)) throw std::runtime_error("invalid player key");
+  auto player = data.players.find(key);
+  if (player != data.players.end()) {
+    auto value = player->second.values.find(name);
+    if (value != player->second.values.end()) found = &value->second;
+  }
+  if (found) lua_pushlstring(L, found->data(), found->size());
+  else lua_pushnil(L);
+  return 1;
+}
+
+int Runtime::player_set(lua_State* L) {
+  auto& data = this->require_player_data("players.store");
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("package_unload storage is read-only");
+  const char* key = string_arg(L, 1, 25);
+  const char* name = string_arg(L, 2, PlayerData::MAX_KEY_BYTES);
+  if (lua_isnoneornil(L, 3)) {
+    data.set(key, name, std::nullopt);
+  } else {
+    data.set(key, name, std::string(string_arg(L, 3, PlayerData::MAX_VALUE_BYTES)));
+  }
+  return 0;
+}
+
+int Runtime::board_add(lua_State* L) {
+  auto& data = this->require_player_data("boards");
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("package_unload storage is read-only");
+  const char* board = string_arg(L, 1, PlayerData::MAX_KEY_BYTES);
+  const char* key = string_arg(L, 2, 25);
+  if (!lua_isinteger(L, 3)) throw std::runtime_error("board_add expects an integer amount");
+  const char* name = lua_isnoneornil(L, 4) ? "" : string_arg(L, 4, 256);
+  lua_Integer score = data.board_add(board, key, lua_tointeger(L, 3), std::string(name).substr(0, PlayerData::MAX_NAME_BYTES));
+  lua_pushinteger(L, score);
+  return 1;
+}
+
+int Runtime::board_get(lua_State* L) {
+  auto& data = this->require_player_data("boards");
+  const char* board = string_arg(L, 1, PlayerData::MAX_KEY_BYTES);
+  const char* key = string_arg(L, 2, 25);
+  auto score = data.board_get(board, key);
+  if (score) lua_pushinteger(L, *score);
+  else lua_pushnil(L);
+  return 1;
+}
+
+int Runtime::board_top(lua_State* L) {
+  auto& data = this->require_player_data("boards");
+  const char* board = string_arg(L, 1, PlayerData::MAX_KEY_BYTES + 9);
+  if (!lua_isinteger(L, 2)) throw std::runtime_error("board_top expects a board name and a count");
+  lua_Integer count = lua_tointeger(L, 2);
+  if (count < 1 || count > static_cast<lua_Integer>(PlayerData::MAX_TOP)) throw std::runtime_error("board_top count must be 1..50");
+  // Owned by Runtime across Lua allocation errors; cleared after every callback.
+  this->current_board_top = data.board_top(board, static_cast<size_t>(count));
+  const auto& top = *this->current_board_top;
+  lua_createtable(L, static_cast<int>(top.size()), 0);
+  for (size_t z = 0; z < top.size(); z++) {
+    lua_createtable(L, 0, 4);
+    lua_pushinteger(L, static_cast<lua_Integer>(z + 1));
+    lua_setfield(L, -2, "rank");
+    lua_pushlstring(L, top[z].player_key.data(), top[z].player_key.size());
+    lua_setfield(L, -2, "player_key");
+    lua_pushlstring(L, top[z].name.data(), top[z].name.size());
+    lua_setfield(L, -2, "name");
+    lua_pushinteger(L, top[z].score);
+    lua_setfield(L, -2, "score");
+    lua_rawseti(L, -2, static_cast<lua_Integer>(z + 1));
+  }
+  this->current_board_top.reset();
+  return 1;
+}
+
+int Runtime::board_reset(lua_State* L) {
+  auto& data = this->require_player_data("boards");
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("package_unload storage is read-only");
+  const char* board = string_arg(L, 1, PlayerData::MAX_KEY_BYTES);
+  lua_pushboolean(L, data.board_reset(board));
+  return 1;
+}
+
+int Runtime::meseta_grant(lua_State* L) {
+  this->require_grant("economy.meseta");
+  this->require_context(false);
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("Meseta grants are unavailable during package unload");
+  const char* target = string_arg(L, 1, 25);
+  if (!lua_isinteger(L, 2)) throw std::runtime_error("meseta_grant expects an integer amount");
+  lua_Integer amount = lua_tointeger(L, 2);
+  if (amount < 1 || amount > 1000000000) throw std::runtime_error("meseta_grant amount must be 1..1000000000");
+  const char* grant_id = string_arg(L, 3, PlayerData::MAX_GRANT_ID_BYTES);
+  if (!*grant_id) throw std::runtime_error("meseta_grant needs a grant ID");
+  const char* reason = lua_isnoneornil(L, 4) ? "" : string_arg(L, 4, 100);
+  MesetaResult result;
+  if (!std::strcmp(target, "self")) {
+    // The caller's own account: only in a player callback. Chat mutes do not block rewards;
+    // the host still decides online delivery versus queueing.
+    if (this->current_context->allow_player_actions && !this->current_context->player_key.empty()) {
+      result = this->host.meseta_grant(this->id(), this->current_context->player_key, amount, grant_id, reason);
+    }
+  } else {
+    if (!valid_player_key(target)) throw std::runtime_error("meseta_grant target must be \"self\" or a player key");
+    result = this->host.meseta_grant(this->id(), target, amount, grant_id, reason);
+  }
+  lua_pushboolean(L, result.ok);
+  lua_pushstring(L, result.status ? result.status : "unavailable");
+  if (result.balance >= 0) lua_pushinteger(L, result.balance);
+  else lua_pushnil(L);
+  return 3;
+}
+
+uint8_t Runtime::caelum_lobby_arg(lua_State* L, int index) {
+  // A lobby: its number (0-63: 0-19 the stock lobbies, 20-63 the Caelum extra lobbies) or its menu name. A name
+  // the server does not have gives CaelumScenes::NO_LOBBY: objects and music refuse it ("no_such_lobby").
+  this->require_grant("caelum.scene");
+  this->require_context(false);
+  if (lua_type(L, index) == LUA_TSTRING) {
+    std::string name = string_arg(L, index, 64);
+    return name.empty() ? CaelumScenes::NO_LOBBY : this->host.caelum_lobby_named(name);
+  }
+  if (!lua_isinteger(L, index)) throw std::runtime_error("expected a lobby number or a lobby name");
+  lua_Integer lobby = lua_tointeger(L, index);
+  if (lobby < CaelumScenes::FIRST_LOBBY || lobby > CaelumScenes::LAST_LOBBY) {
+    throw std::runtime_error("lobby numbers are 0..63");
+  }
+  return static_cast<uint8_t>(lobby);
+}
+
+int Runtime::caelum_object(lua_State* L) {
+  uint8_t lobby = this->caelum_lobby_arg(L, 1);
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("Caelum objects cannot be changed during package unload");
+  std::string key = string_arg(L, 2, CaelumScenes::MAX_KEY_BYTES);
+  if (lua_type(L, 3) != LUA_TTABLE) throw std::runtime_error("caelum_object expects a lobby number, a key, and a table");
+  static const std::set<std::string> keys{"model", "model_part", "texture", "motion", "x", "y", "z", "rot_y", "scale", "start_utc_ms",
+      "loop", "visible", "rot_x", "rot_z", "attach", "bone", "upright", "follow", "move_motion"};
+  lua_pushnil(L);
+  while (lua_next(L, 3)) {
+    if (lua_type(L, -2) != LUA_TSTRING || !keys.count(string_arg(L, -2, 32))) {
+      throw std::runtime_error("unknown caelum_object field");
+    }
+    lua_pop(L, 1);
+  }
+  CaelumObjectSpec spec;
+  auto text = [&](const char* name, std::string& out, bool required) {
+    lua_pushstring(L, name);
+    lua_rawget(L, 3);
+    if (!lua_isnil(L, -1)) out = string_arg(L, -1, 64);
+    else if (required) throw std::runtime_error("caelum_object needs a model file name");
+    lua_pop(L, 1);
+  };
+  auto number = [&](const char* name, double& out) {
+    lua_pushstring(L, name);
+    lua_rawget(L, 3);
+    if (!lua_isnil(L, -1)) {
+      if (lua_type(L, -1) != LUA_TNUMBER) throw std::runtime_error("caelum_object positions, rotation and scale must be numbers");
+      out = lua_tonumber(L, -1);
+    }
+    lua_pop(L, 1);
+  };
+  auto flag = [&](const char* name, bool& out) {
+    lua_pushstring(L, name);
+    lua_rawget(L, 3);
+    if (!lua_isnil(L, -1)) {
+      if (lua_type(L, -1) != LUA_TBOOLEAN) throw std::runtime_error("caelum_object loop, visible, upright and follow must be booleans");
+      out = lua_toboolean(L, -1);
+    }
+    lua_pop(L, 1);
+  };
+  text("model", spec.model, true);
+  text("model_part", spec.part, false);
+  text("texture", spec.texture, false);
+  text("motion", spec.motion, false);
+  number("x", spec.x);
+  number("y", spec.y);
+  number("z", spec.z);
+  number("rot_y", spec.rot_y);
+  number("scale", spec.scale);
+  flag("loop", spec.loop);
+  flag("visible", spec.visible);
+  text("move_motion", spec.move_motion, false);
+  number("rot_x", spec.rot_x);
+  number("rot_z", spec.rot_z);
+  flag("upright", spec.upright);
+  flag("follow", spec.follow);
+  // attach: a player's session ID (ctx.client_id, a decimal string, or an integer)
+  lua_pushliteral(L, "attach");
+  lua_rawget(L, 3);
+  if (lua_type(L, -1) == LUA_TSTRING) {
+    std::string id = string_arg(L, -1, 20);
+    if (id.empty() || id.find_first_not_of("0123456789") != std::string::npos) throw std::runtime_error("attach must be a player's client_id");
+    spec.attach = std::stoull(id);
+  } else if (lua_isinteger(L, -1) && lua_tointeger(L, -1) > 0) {
+    spec.attach = static_cast<uint64_t>(lua_tointeger(L, -1));
+  } else if (!lua_isnil(L, -1)) {
+    throw std::runtime_error("attach must be a player's client_id");
+  }
+  lua_pop(L, 1);
+  // bone: "root", "head" (node 58), "head_top" (57) or a node number 0-63
+  lua_pushliteral(L, "bone");
+  lua_rawget(L, 3);
+  if (lua_type(L, -1) == LUA_TSTRING) {
+    std::string bone = string_arg(L, -1, 16);
+    if (bone == "root") spec.bone = -1;
+    else if (bone == "head") spec.bone = CEXT_HEAD_BONE;
+    else if (bone == "head_top") spec.bone = CEXT_HEAD_BONE - 1;
+    else throw std::runtime_error("bone must be \"root\", \"head\", \"head_top\" or a node number 0-63");
+  } else if (lua_isinteger(L, -1)) {
+    spec.bone = static_cast<int>(std::clamp<lua_Integer>(lua_tointeger(L, -1), -2, 64));   // out of range: invalid_value
+  } else if (!lua_isnil(L, -1)) {
+    throw std::runtime_error("bone must be \"root\", \"head\", \"head_top\" or a node number 0-63");
+  }
+  lua_pop(L, 1);
+  lua_pushliteral(L, "start_utc_ms");
+  lua_rawget(L, 3);
+  if (!lua_isnil(L, -1)) {
+    if (!lua_isinteger(L, -1) || lua_tointeger(L, -1) < 0) throw std::runtime_error("start_utc_ms must be a non-negative integer");
+    spec.start_ms = lua_tointeger(L, -1);
+  }
+  lua_pop(L, 1);
+  auto result = this->host.caelum_object(this->id(), lobby, key, spec);
+  lua_pushboolean(L, result.ok);
+  if (result.reason) lua_pushstring(L, result.reason);
+  else lua_pushnil(L);
+  return 2;
+}
+
+int Runtime::caelum_remove(lua_State* L) {
+  uint8_t lobby = this->caelum_lobby_arg(L, 1);
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("Caelum objects cannot be changed during package unload");
+  const char* key = string_arg(L, 2, CaelumScenes::MAX_KEY_BYTES);
+  lua_pushboolean(L, this->host.caelum_remove(this->id(), lobby, key));
+  return 1;
+}
+
+int Runtime::caelum_music(lua_State* L) {
+  uint8_t lobby = this->caelum_lobby_arg(L, 1);
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("Caelum music cannot be changed during package unload");
+  CaelumResult result;
+  if (lua_isnoneornil(L, 2)) {
+    result = this->host.caelum_music(this->id(), lobby, nullptr);
+  } else {
+    CaelumMusicSpec spec;
+    spec.file = string_arg(L, 2, 64);
+    if (!lua_isnoneornil(L, 3)) {
+      if (lua_type(L, 3) != LUA_TTABLE) throw std::runtime_error("caelum_music options must be a table");
+      lua_pushnil(L);
+      while (lua_next(L, 3)) {
+        if (lua_type(L, -2) != LUA_TSTRING) throw std::runtime_error("unknown caelum_music option");
+        std::string name = string_arg(L, -2, 32);
+        if (name == "loop") {
+          if (lua_type(L, -1) != LUA_TBOOLEAN) throw std::runtime_error("caelum_music loop must be a boolean");
+          spec.loop = lua_toboolean(L, -1);
+        } else if (name == "start_utc_ms") {
+          if (!lua_isinteger(L, -1) || lua_tointeger(L, -1) < 0) throw std::runtime_error("start_utc_ms must be a non-negative integer");
+          spec.start_ms = lua_tointeger(L, -1);
+        } else {
+          throw std::runtime_error("unknown caelum_music option");
+        }
+        lua_pop(L, 1);
+      }
+    }
+    result = this->host.caelum_music(this->id(), lobby, &spec);
+  }
+  lua_pushboolean(L, result.ok);
+  if (result.reason) lua_pushstring(L, result.reason);
+  else lua_pushnil(L);
+  return 2;
+}
+
+int Runtime::caelum_clear(lua_State* L) {
+  uint8_t lobby = this->caelum_lobby_arg(L, 1);
+  if (this->lifecycle == Lifecycle::UNLOAD) throw std::runtime_error("Caelum objects cannot be changed during package unload");
+  lua_pushboolean(L, this->host.caelum_clear(this->id(), lobby));
+  return 1;
+}
+
+int Runtime::caelum_listeners(lua_State* L) {
+  uint8_t lobby = this->caelum_lobby_arg(L, 1);
+  int count = this->host.caelum_listeners(lobby);
+  if (count < 0) lua_pushnil(L);
+  else lua_pushinteger(L, count);
+  return 1;
+}
+
+int Runtime::caelum_lobby(lua_State* L) {
+  // {number, name, listeners} of a lobby given by number or name, or nil when the server has no such lobby.
+  uint8_t lobby = this->caelum_lobby_arg(L, 1);
+  auto name = lobby == CaelumScenes::NO_LOBBY ? std::nullopt : this->host.caelum_lobby_name(lobby);
+  if (!name) {
+    lua_pushnil(L);
+    return 1;
+  }
+  int listeners = this->host.caelum_listeners(lobby);
+  lua_createtable(L, 0, 3);
+  lua_pushinteger(L, lobby);
+  lua_setfield(L, -2, "number");
+  lua_pushlstring(L, name->data(), name->size());
+  lua_setfield(L, -2, "name");
+  lua_pushinteger(L, listeners < 0 ? 0 : listeners);
+  lua_setfield(L, -2, "listeners");
+  return 1;
+}
+
+int Runtime::position(lua_State* L) {
+  // The caller's own position (lobby.read): {x, y, z, floor, is_game, lobby_number, lobby_name} or nil.
+  this->require_grant("lobby.read");
+  this->require_context(false);
+  if (lua_gettop(L)) throw std::runtime_error("position expects no arguments");
+  if (!this->current_context->allow_player_actions || !this->host.authorized(*this->current_context)) {
+    lua_pushnil(L);
+    return 1;
+  }
+  auto where = this->host.player_position(*this->current_context);
+  if (!where) {
+    lua_pushnil(L);
+    return 1;
+  }
+  lua_createtable(L, 0, 7);
+  lua_pushnumber(L, where->x);
+  lua_setfield(L, -2, "x");
+  lua_pushnumber(L, where->y);
+  lua_setfield(L, -2, "y");
+  lua_pushnumber(L, where->z);
+  lua_setfield(L, -2, "z");
+  lua_pushinteger(L, where->floor);
+  lua_setfield(L, -2, "floor");
+  lua_pushboolean(L, where->is_game);
+  lua_setfield(L, -2, "is_game");
+  if (where->lobby_number != CaelumScenes::NO_LOBBY) {
+    lua_pushinteger(L, where->lobby_number);
+    lua_setfield(L, -2, "lobby_number");
+    lua_pushlstring(L, where->lobby_name.data(), where->lobby_name.size());
+    lua_setfield(L, -2, "lobby_name");
+  }
+  return 1;
 }
 
 } // namespace teaserv::extensions

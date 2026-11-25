@@ -38,6 +38,8 @@ struct TestHost : Host {
     ++reads;
     return view;
   }
+  std::optional<Position> where;
+  std::optional<Position> player_position(const Context&) const override { return where; }
 };
 static Package package(const std::string& source) {
   return {"lobby-test", "1", source, {"commands", "events", "timers", "chat.reply", "lobby.read"}, {}};
@@ -220,8 +222,31 @@ int main(int argc, char** argv) {
       Runtime unavailable(host, definition);
       unavailable.dispatch("who", "", context);
       check(host.messages.back() == "Lobby information is unavailable." && unavailable.enabled(), "who unavailable handling failed");
+
+      // $xyz: the caller's position to one decimal place, and the lobby for the concert setting.
+      Host::Position here;
+      here.x = 10.04;
+      here.y = 0.5;
+      here.z = -60.26;
+      here.lobby_number = 20;
+      here.lobby_name = "Stage";
+      host.where = here;
+      before = host.messages.size();
+      unavailable.dispatch("xyz", "", context);
+      check(host.messages.size() == before + 2 && host.messages[before] == "X 10.0  Y 0.5  Z -60.3" &&
+              host.messages[before + 1] == "Lobby Stage (number 20)", "xyz in a lobby wrong");
+      host.where->lobby_number = CaelumScenes::NO_LOBBY;
+      host.where->is_game = true;
+      host.where->floor = 3;
+      Runtime in_game(host, definition);
+      in_game.dispatch("xyz", "", context);
+      check(host.messages.back() == "In a game, floor 3", "xyz in a game wrong");
+      host.where.reset();
+      Runtime nowhere(host, definition);
+      nowhere.dispatch("xyz", "", context);
+      check(host.messages.back() == "Your position is unavailable." && nowhere.diagnostics().callback_errors == 0, "xyz unavailable wrong");
     }
-    std::cout << "Lobby view bounds, permissions, copies, scopes, budgets, OOM and who example passed\n";
+    std::cout << "Lobby view bounds, permissions, copies, scopes, budgets, OOM, who and xyz examples passed\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';
