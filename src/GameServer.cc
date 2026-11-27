@@ -15,6 +15,7 @@
 #include <phosg/Time.hh>
 
 #include "Loggers.hh"
+#include "NetworkAddresses.hh"
 #include "PSOProtocol.hh"
 #include "ReceiveCommands.hh"
 
@@ -121,6 +122,22 @@ std::shared_ptr<Client> GameServer::create_client(
     return nullptr;
   }
 
+  auto limit = this->state->connection_limiter->check(addr, *this->state->data->connection_limits, phosg::now());
+  if (limit.decision != ConnectionLimiter::Decision::ALLOW) {
+    // One line when a cooldown starts; refused attempts during the cooldown are not logged (they could flood the log)
+    if (limit.decision == ConnectionLimiter::Decision::STARTED_COOLDOWN) {
+      this->log.warning_f("Connection limit: {} made too many connections; refusing it for {} minutes",
+          string_for_address(addr), limit.cooldown_remaining_usecs / 60000000);
+    } else if (limit.decision == ConnectionLimiter::Decision::TOO_MANY_OPEN) {
+      this->log.info_f("Connection limit: refused {} via {} ({})", string_for_address(addr), listen_sock->name,
+          name_for_connection_limit_decision(limit.decision));
+    }
+    if (client_sock.is_open()) {
+      client_sock.close();
+    }
+    return nullptr;
+  }
+
   auto channel = SocketChannel::create(
       this->io_context,
       std::make_unique<asio::ip::tcp::socket>(std::move(client_sock)),
@@ -132,6 +149,7 @@ std::shared_ptr<Client> GameServer::create_client(
       this->state->data->censor_credentials,
       false);
   auto c = std::make_shared<Client>(this->shared_from_this(), channel, listen_sock->behavior);
+  c->connection_slot = std::move(limit.slot);
   this->log.info_f("Client connected: C-{:X} via {}", c->id, listen_sock->name);
 
   this->state->client_for_id.emplace(c->id, c);
@@ -169,6 +187,7 @@ asio::awaitable<void> GameServer::destroy_client(std::shared_ptr<Client> c) {
 
   // The client may not actually be disconnected yet if an uncaught exception occurred in a handler task
   c->channel->disconnect();
+  c->connection_slot.reset(); // the Client object may outlive the connection (other references), the slot must not
 
   // Close the proxy session, if any
   if (c->proxy_session) {

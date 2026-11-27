@@ -1959,6 +1959,10 @@ static std::string file_path_for_recording(const std::string& args, uint32_t acc
       throw std::runtime_error("invalid recording name");
     }
   }
+  // '\', ':' and ".." are path syntax on Windows; an empty name keeps its old meaning (file "<account>_.mzr")
+  if (!args.empty() && !is_safe_filename_component(args)) {
+    throw std::runtime_error("invalid recording name");
+  }
   return std::format("system/ep3/battle-records/{:010}_{}.mzr{}", account_id, args, compressed ? "" : "d");
 }
 

@@ -772,3 +772,11 @@ std::string remove_color(std::string_view s);
 std::string strip_color(std::string_view s);
 
 std::string escape_player_name(std::string_view name);
+
+// Filename safety for names that come from clients or remote servers (Teaserv). A character is unsafe if it is a
+// control character, DEL, a path or drive separator (/ \ :) or a character Windows does not allow in filenames
+// (* ? " < > |). A safe component is non-empty, has no unsafe characters, contains no "..", does not start with '.'
+// and does not end with '.' or ' ' (Windows drops those, so "a." would name "a"). On Windows '\' and ':' are path
+// syntax, so checking for '/' alone is not enough.
+bool is_unsafe_filename_char(char ch);
+bool is_safe_filename_component(std::string_view name);

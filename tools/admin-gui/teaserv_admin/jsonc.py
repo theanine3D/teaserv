@@ -331,6 +331,22 @@ def set_value(text, path, value_text):
     return text[:closing] + " " + entry + " " + text[closing:]
 
 
+def ensure_group(text, path):
+    """Return the text with the group at `path` (and any missing groups above it) present, as an empty group on its
+    own lines, so set_value can add items to it. Existing groups leave the text unchanged."""
+    path = tuple(path)
+    if not path:
+        return text
+    node = find(parse(text), path)
+    if node is not None:
+        if node.kind != "dict":
+            raise KeyError("%s exists in the file but is not a group" % "/".join(str(p) for p in path))
+        return text
+    text = ensure_group(text, path[:-1])
+    newline = _newline(text)
+    return set_value(text, path, "{" + newline + "  " * len(path) + "}")
+
+
 def remove_value(text, path):
     """Return the text without the item at `path` (a name in a group). Missing items leave the text unchanged."""
     root = parse(text)

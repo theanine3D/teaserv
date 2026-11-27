@@ -11,6 +11,10 @@ WRAP = 560
 
 
 def format_number(value):
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(format_number(v) for v in value) if value else "nothing"
     if isinstance(value, float) and value == int(value):
         return "%d" % value
     return str(value)

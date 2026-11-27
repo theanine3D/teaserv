@@ -142,6 +142,7 @@ public:
   bool caelum_mod_ready = false;
   bool caelum_voice_on = false;                 // F2 flag 0x11 bit 0: in its room's voice chat (CaelumVoice.hh)
   caelum::voice::RateLimiter caelum_voice_rate; // F2 flag 0x13 signals
+  std::shared_ptr<void> connection_slot;        // ConnectionLimiter::Slot; released when the client is destroyed
   std::shared_ptr<const Episode3::CardIndex> ep3_cards;
   std::shared_ptr<const caelum::cardmods::PackKeys> caelum_session_pack_keys;
   std::shared_ptr<const Episode3::CardIndex> ep3_card_catalog() const;

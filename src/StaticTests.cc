@@ -8,6 +8,7 @@
 #include "Episode3/CaelumLobbies.hh"
 #include "Episode3/CaelumCardMods.hh"
 #include "CaelumVoice.hh"
+#include "ConnectionLimiter.hh"
 #include "TeaservModpackHttp.hh"
 #include "Episode3/Server.hh"
 #include "Episode3/RulerServer.hh"
@@ -90,6 +91,89 @@ void run_static_tests() {
   expect_eq(sega_decoder(ordinary), tt_standard_sjis_to_utf8(ordinary));
   expect_eq(sega_decoder("plain ASCII"), "plain ASCII");
   expect_raises(std::runtime_error, [&] { sega_decoder("\xF0"); });
+
+  phosg::log_info_f("-- Filename components from clients (path traversal)");
+  for (const char* good : {"gba_demo.gba", "bob", "Player 1", "a.b.c", "x-y_z", "\xC3\xA9t\xC3\xA9", "CAELUM~1.ZIP"}) {
+    expect(is_safe_filename_component(good));
+  }
+  for (const char* bad : {"", ".", "..", ".hidden", "a.", "a ", "..\\licenses\\1.json", "x\\..\\player_bob",
+           "a/b", "a\\b", "C:x", "file:stream", "a..b", "a*", "a?", "a\"b", "a<b", "a>b", "a|b", "a\tb", "a\x7F"}) {
+    expect(!is_safe_filename_component(bad));
+  }
+  expect(is_unsafe_filename_char('\\') && is_unsafe_filename_char(':') && is_unsafe_filename_char('/'));
+  expect(!is_unsafe_filename_char('.') && !is_unsafe_filename_char(' ') && !is_unsafe_filename_char('\xC3'));
+
+  phosg::log_info_f("-- Per-address connection limits");
+  {
+    using D = ConnectionLimiter::Decision;
+    constexpr uint64_t SEC = 1000000;
+    auto defaults = ConnectionLimitConfig::from_json(nullptr);
+    expect(defaults.enabled);
+    expect_eq(30, defaults.max_attempts_per_window);
+    expect_eq(600 * SEC, defaults.cooldown_usecs);
+    expect_eq(10, defaults.max_concurrent);
+    expect(defaults.exempt.check(0x7F000001) && !defaults.exempt.check(0xC0A80102));
+
+    auto j = phosg::JSON::parse(
+        R"({"MaxConnectionsPerMinute": 3, "CooldownMinutes": 10, "MaxConnectionsPerAddress": 2, "ExemptAddresses": ["10.0.0.0/8"]})");
+    auto config = ConnectionLimitConfig::from_json(&j);
+    expect(config.exempt.check(0x0A000005) && !config.exempt.check(0x7F000001));
+    for (const char* bad : {R"({"MaxConnectionsPerMinute": 0})", R"({"CooldownMinutes": 0})",
+             R"({"MaxConnectionsPerAddress": -1})", R"([])", R"({"ExemptAddresses": ["1.2.3"]})"}) {
+      auto bad_json = phosg::JSON::parse(bad);
+      expect_raises(std::runtime_error, [&] { ConnectionLimitConfig::from_json(&bad_json); });
+    }
+
+    const uint32_t a = 0xC0A80102, b = 0xC0A80103;
+    auto limiter = ConnectionLimiter::create();
+    uint64_t t = 1000 * SEC;
+    {
+      // Concurrent cap: two slots held, the third is refused, releasing one frees a place
+      auto r1 = limiter->check(a, config, t);
+      auto r2 = limiter->check(a, config, t + 1);
+      expect(r1.decision == D::ALLOW && r1.slot && r2.decision == D::ALLOW);
+      expect_eq(2, limiter->open_connections(a));
+      expect(limiter->check(a, config, t + 2).decision == D::TOO_MANY_OPEN); // 3rd attempt this minute
+      r1.slot.reset();
+      expect_eq(1, limiter->open_connections(a));
+      // 4th attempt within the minute goes over 3/minute: cooldown, even though a place is free
+      auto r4 = limiter->check(a, config, t + 3);
+      expect(r4.decision == D::STARTED_COOLDOWN && !r4.slot);
+      expect_eq(600 * SEC, r4.cooldown_remaining_usecs);
+    }
+    expect_eq(0, limiter->open_connections(a)); // slots released when the results went out of scope
+    // Other addresses are unaffected; exempt addresses are never counted
+    expect(limiter->check(b, config, t + 4).decision == D::ALLOW);
+    for (size_t z = 0; z < 100; z++) {
+      expect(limiter->check(0x0A000005, config, t + z).decision == D::ALLOW);
+    }
+    // Attempts during the cooldown are refused and do not extend it
+    auto in_cooldown = limiter->check(a, config, t + 300 * SEC);
+    expect(in_cooldown.decision == D::IN_COOLDOWN);
+    expect_eq(300 * SEC + 3, in_cooldown.cooldown_remaining_usecs); // still ends 600 s after it started
+    expect(limiter->check(a, config, t + 3 + 600 * SEC - 1).decision == D::IN_COOLDOWN);
+    // When it ends, a fresh window starts
+    expect(limiter->check(a, config, t + 3 + 600 * SEC).decision == D::ALLOW);
+    // The window resets after a minute: 3 per minute, spread over minutes, never triggers a cooldown
+    auto spread = ConnectionLimiter::create();
+    for (size_t minute = 0; minute < 5; minute++) {
+      for (size_t z = 0; z < 3; z++) {
+        expect(spread->check(b, config, t + minute * 61 * SEC + z).decision == D::ALLOW);
+      }
+    }
+    // Idle addresses are forgotten (sweep runs at most once per window)
+    expect(spread->tracked_addresses() >= 1);
+    spread->check(a, config, t + 3600 * SEC); // a: new entry; b: window long over, no open slots
+    expect_eq(1, spread->tracked_addresses());
+    // Disabled: everything allowed, nothing tracked
+    ConnectionLimitConfig off;
+    off.enabled = false;
+    auto unused = ConnectionLimiter::create();
+    for (size_t z = 0; z < 100; z++) {
+      expect(unused->check(a, off, t).decision == D::ALLOW);
+    }
+    expect_eq(0, unused->tracked_addresses());
+  }
 
   phosg::log_info_f("-- Caelum voice chat");
   {

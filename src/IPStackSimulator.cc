@@ -12,6 +12,7 @@
 #include "GameServer.hh"
 #include "IPFrameInfo.hh"
 #include "Loggers.hh"
+#include "NetworkAddresses.hh"
 
 using TCPFlag = TCPHeader::Flag;
 
@@ -1417,9 +1418,26 @@ std::shared_ptr<IPSSClient> IPStackSimulator::create_client(
     return nullptr;
   }
 
+  auto limit = this->state->connection_limiter->check(addr, *this->state->data->connection_limits, phosg::now());
+  if (limit.decision != ConnectionLimiter::Decision::ALLOW) {
+    if (limit.decision == ConnectionLimiter::Decision::STARTED_COOLDOWN) {
+      this->log.warning_f("Connection limit: {} made too many connections; refusing it for {} minutes",
+          string_for_address(addr), limit.cooldown_remaining_usecs / 60000000);
+    } else if (limit.decision == ConnectionLimiter::Decision::TOO_MANY_OPEN) {
+      this->log.info_f("Connection limit: refused {} via {} ({})", string_for_address(addr), listen_sock->name,
+          name_for_connection_limit_decision(limit.decision));
+    }
+    if (client_sock.is_open()) {
+      client_sock.close();
+    }
+    return nullptr;
+  }
+
   uint64_t network_id = this->next_network_id++;
   this->log.info_f("Virtual network N-{:X} connected via {}", network_id, listen_sock->name);
-  return std::make_shared<IPSSClient>(this->shared_from_this(), network_id, listen_sock->protocol, std::move(client_sock));
+  auto c = std::make_shared<IPSSClient>(this->shared_from_this(), network_id, listen_sock->protocol, std::move(client_sock));
+  c->connection_slot = std::move(limit.slot);
+  return c;
 }
 
 asio::awaitable<void> IPStackSimulator::handle_tapserver_client(std::shared_ptr<IPSSClient> c) {
@@ -1528,6 +1546,7 @@ asio::awaitable<void> IPStackSimulator::handle_client(std::shared_ptr<IPSSClient
 
 asio::awaitable<void> IPStackSimulator::destroy_client(std::shared_ptr<IPSSClient> c) {
   this->log.info_f("Virtual network N-{:X} disconnected ({} TCP connections to close)", c->network_id, c->tcp_connections.size());
+  c->connection_slot.reset();
   for (const auto& [conn_id, conn] : c->tcp_connections) {
     if (conn->server_channel) {
       this->log.info_f("Closing TCP connection {:016X} on N-{:X}", conn_id, c->network_id);

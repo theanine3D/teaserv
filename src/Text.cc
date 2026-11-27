@@ -484,6 +484,42 @@ std::string escape_player_name(std::string_view name) {
   }
 }
 
+bool is_unsafe_filename_char(char ch) {
+  unsigned char uch = static_cast<unsigned char>(ch);
+  if (uch < 0x20 || uch == 0x7F) {
+    return true;
+  }
+  switch (ch) {
+    case '/':
+    case '\\':
+    case ':':
+    case '*':
+    case '?':
+    case '"':
+    case '<':
+    case '>':
+    case '|':
+      return true;
+    default:
+      return false;
+  }
+}
+
+bool is_safe_filename_component(std::string_view name) {
+  if (name.empty() || name.front() == '.' || name.back() == '.' || name.back() == ' ') {
+    return false;
+  }
+  if (name.find("..") != std::string_view::npos) {
+    return false;
+  }
+  for (char ch : name) {
+    if (is_unsafe_filename_char(ch)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 char marker_for_language(Language language) {
   switch (language) {
     case Language::JAPANESE:

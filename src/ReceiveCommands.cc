@@ -3468,7 +3468,10 @@ static asio::awaitable<void> on_AA(std::shared_ptr<Client> c, Channel::Message& 
 static asio::awaitable<void> on_D7_GC(std::shared_ptr<Client> c, Channel::Message& msg) {
   std::string filename(msg.data);
   phosg::strip_trailing_zeroes(filename);
-  if (filename.find('/') != std::string::npos) {
+  // The name comes from the client: refuse anything that is not a plain filename (on Windows "..\" also climbs out
+  // of system/gba, so checking for '/' alone would allow reading any file on the drive)
+  if (!is_safe_filename_component(filename)) {
+    c->log.warning_f("Refused GBA file request with unsafe name");
     send_command(c, 0xD7, 0x00);
   } else {
     try {

@@ -104,6 +104,7 @@ set(SOURCES
     src/CommandCensorData.cc
     src/CommonItemSet.cc
     src/Compression.cc
+    src/ConnectionLimiter.cc
     src/DCSerialNumbers.cc
     src/DNSServer.cc
     src/DOLFileIndex.cc

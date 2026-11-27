@@ -11,6 +11,7 @@
 #include <asio.hpp>
 #include <phosg/JSON.hh>
 #include <phosg/Strings.hh>
+#include <phosg/Time.hh>
 
 #include "Episode3/CaelumCardMods.hh"
 #include "Loggers.hh"
@@ -31,6 +32,7 @@ constexpr auto WRITE_TIMEOUT = std::chrono::seconds(60); // per block; a stalled
 
 std::shared_ptr<tcp::acceptor> acceptor;
 size_t open_connections = 0;
+std::weak_ptr<ServerState> server_state; // for the per-IP connection limits (ConnectionLimiter.hh)
 
 const char* reason_for(int code) {
   switch (code) {
@@ -82,7 +84,8 @@ asio::awaitable<void> write_all(tcp::socket& sock, const void* data, size_t size
   co_await asio::async_write(sock, asio::buffer(data, size), asio::cancel_after(WRITE_TIMEOUT, asio::use_awaitable));
 }
 
-asio::awaitable<void> serve(tcp::socket sock) {
+// `slot` holds this address's open-connection count until the download ends
+asio::awaitable<void> serve(tcp::socket sock, [[maybe_unused]] std::shared_ptr<ConnectionLimiter::Slot> slot) {
   struct Count {
     Count() {
       open_connections++;
@@ -204,7 +207,25 @@ asio::awaitable<void> accept_loop(std::shared_ptr<tcp::acceptor> listener) {
       sock.close(ignored);
       continue;
     }
-    asio::co_spawn(listener->get_executor(), serve(std::move(sock)), asio::detached);
+    std::shared_ptr<ConnectionLimiter::Slot> slot;
+    auto state = server_state.lock();
+    std::error_code endpoint_error;
+    auto endpoint = sock.remote_endpoint(endpoint_error);
+    if (state && !endpoint_error && endpoint.address().is_v4()) {
+      uint32_t addr = endpoint.address().to_v4().to_uint();
+      auto limit = state->modpack_http_connection_limiter->check(addr, *state->data->connection_limits, phosg::now());
+      if (limit.decision != ConnectionLimiter::Decision::ALLOW) {
+        if (limit.decision == ConnectionLimiter::Decision::STARTED_COOLDOWN) {
+          http_log.warning_f("Connection limit: {} made too many connections; refusing it for {} minutes",
+              endpoint.address().to_string(), limit.cooldown_remaining_usecs / 60000000);
+        }
+        std::error_code ignored;
+        sock.close(ignored);
+        continue;
+      }
+      slot = std::move(limit.slot);
+    }
+    asio::co_spawn(listener->get_executor(), serve(std::move(sock), std::move(slot)), asio::detached);
   }
 }
 
@@ -253,6 +274,7 @@ void start(std::shared_ptr<ServerState> state) {
   if (acceptor) {
     return;
   }
+  server_state = state;
   bool enabled = false;
   int64_t port = 80;
   try {

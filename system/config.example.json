@@ -112,6 +112,27 @@
   // server. (It is also inadvisable to expose the HTTP server to the public Internet.)
   "BannedIPV4Ranges": [],
 
+  // Teaserv: per-address connection limits, against clients (or scripts) that reconnect over and over. They apply to
+  // the game and patch ports, the IP/PPP stack ports and the modpack download server (which keeps its own count, so
+  // pack downloads do not use up a player's login allowance). The DNS server and the voice relay are not affected.
+  //   Enabled: false turns all limits off.
+  //   MaxConnectionsPerMinute: new connections one IPv4 address may open per minute. One login takes about 3 to 5
+  //     connections, and players behind the same router or mobile carrier share an address, so keep this generous.
+  //     The next connection over the limit starts a cooldown.
+  //   CooldownMinutes: how long an address that went over the limit is refused (every new connection is closed at
+  //     once; connections it already has stay open). Attempts during the cooldown do not extend it.
+  //   MaxConnectionsPerAddress: connections one address may hold open at the same time (0 = no limit).
+  //   ExemptAddresses: addresses or CIDR ranges that are never limited (same format as BannedIPV4Ranges). The default
+  //     exempts this PC (127.0.0.0/8); add your LAN (for example "192.168.1.0/24") if you test from other machines.
+  // Changes take effect with `reload config` in the shell.
+  "ConnectionLimits": {
+    "Enabled": true,
+    "MaxConnectionsPerMinute": 30,
+    "CooldownMinutes": 10,
+    "MaxConnectionsPerAddress": 10,
+    "ExemptAddresses": ["127.0.0.0/8"],
+  },
+
   // Other servers to support proxying to. If this is empty for any game version, the proxy server is disabled for that
   // version. Entries in these dictionaries should be of the form "name": "address:port"; the names are used in the
   // proxy server menu.

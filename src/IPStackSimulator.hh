@@ -36,6 +36,7 @@ struct IPSSClient : std::enable_shared_from_this<IPSSClient> {
   std::weak_ptr<IPStackSimulator> sim;
   uint64_t network_id;
   asio::ip::tcp::socket sock;
+  std::shared_ptr<void> connection_slot; // ConnectionLimiter::Slot (Teaserv per-IP limits)
   VirtualNetworkProtocol protocol;
   uint32_t hdlc_escape_control_character_flags = 0xFFFFFFFF;
   uint32_t hdlc_remote_magic_number = 0;

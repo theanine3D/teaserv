@@ -469,10 +469,19 @@ void Client::set_login(std::shared_ptr<Login> login) {
   });
 }
 
+// BB usernames are put into save filenames. Logins refuse unsafe names (AccountIndex::from_bb_credentials); this
+// second check also covers accounts loaded from older license files or added from the shell.
+static const std::string& checked_bb_username(const std::string& bb_username) {
+  if (!is_safe_filename_component(bb_username)) {
+    throw std::runtime_error("BB username cannot be used in a filename");
+  }
+  return bb_username;
+}
+
 // System file
 
 std::string Client::system_filename(const std::string& bb_username) {
-  return std::format("system/players/system_{}.psosys", bb_username);
+  return std::format("system/players/system_{}.psosys", checked_bb_username(bb_username));
 }
 
 std::string Client::system_filename() const {
@@ -511,7 +520,7 @@ void Client::save_system_file() const {
 // Guild Card file
 
 std::string Client::guild_card_filename(const std::string& bb_username) {
-  return std::format("system/players/guild_cards_{}.psocard", bb_username);
+  return std::format("system/players/guild_cards_{}.psocard", checked_bb_username(bb_username));
 }
 
 std::string Client::guild_card_filename() const {
@@ -556,7 +565,7 @@ std::string Client::character_filename(const std::string& bb_username, ssize_t i
   if (index < 0) {
     throw std::logic_error("character index is not set");
   }
-  return std::format("system/players/player_{}_{}.psochar", bb_username, index);
+  return std::format("system/players/player_{}_{}.psochar", checked_bb_username(bb_username), index);
 }
 
 std::string Client::backup_character_filename(uint32_t account_id, size_t index, bool is_ep3) {
@@ -756,9 +765,9 @@ std::string Client::bank_filename(const std::string& bb_username, ssize_t index)
     throw std::logic_error("non-BB players do not have saved bank files");
   }
   if (index < 0) {
-    return std::format("system/players/shared_bank_{}.psobank", bb_username);
+    return std::format("system/players/shared_bank_{}.psobank", checked_bb_username(bb_username));
   } else {
-    return std::format("system/players/player_{}_{}.psobank", bb_username, index);
+    return std::format("system/players/player_{}_{}.psobank", checked_bb_username(bb_username), index);
   }
 }
 
@@ -861,7 +870,7 @@ std::string Client::legacy_account_filename() const {
   if (!this->login || !this->login->bb_license) {
     throw std::logic_error("client is not logged in");
   }
-  return std::format("system/players/account_{}.nsa", this->login->bb_license->username);
+  return std::format("system/players/account_{}.nsa", checked_bb_username(this->login->bb_license->username));
 }
 
 std::string Client::legacy_player_filename() const {
@@ -875,7 +884,7 @@ std::string Client::legacy_player_filename() const {
     throw std::logic_error("character index is not set");
   }
   return std::format("system/players/player_{}_{}.nsc",
-      this->login->bb_license->username, static_cast<ssize_t>(this->bb_character_index + 1));
+      checked_bb_username(this->login->bb_license->username), static_cast<ssize_t>(this->bb_character_index + 1));
 }
 
 void Client::import_blocked_senders(const parray<le_uint32_t, 30>& blocked_senders) {

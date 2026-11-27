@@ -64,6 +64,25 @@ class JsoncTest(unittest.TestCase):
         self.assertEqual(jsonc.parse(jsonc.set_value("{}", ("b",), "2")).to_python(), {"b": 2})
         self.assertEqual(jsonc.parse(jsonc.remove_value('{"a": 1, "b": 2}', ("b",))).to_python(), {"a": 1})
 
+    def test_ensure_group(self):
+        # A setting inside a group the file does not have yet: the group is added on its own lines, then the item
+        text = jsonc.ensure_group(SAMPLE, ("ConnectionLimits",))
+        text = jsonc.set_value(text, ("ConnectionLimits", "CooldownMinutes"), "5")
+        text = jsonc.set_value(text, ("ConnectionLimits", "Enabled"), "true")
+        value = jsonc.parse(text).to_python()
+        self.assertEqual(value["ConnectionLimits"], {"CooldownMinutes": 5, "Enabled": True})
+        self.assertIn('\n  "ConnectionLimits": {\n    "CooldownMinutes": 5,\n    "Enabled": true,\n  },\n', text)
+        self.assertTrue(text.startswith(SAMPLE[:SAMPLE.rindex("}")]))  # everything before it is unchanged
+        # Existing groups and nested missing groups
+        self.assertEqual(jsonc.ensure_group(SAMPLE, ("LogLevels",)), SAMPLE)
+        self.assertEqual(jsonc.ensure_group(SAMPLE, ()), SAMPLE)
+        deep = jsonc.set_value(jsonc.ensure_group("{}", ("a", "b")), ("a", "b", "c"), "1")
+        self.assertEqual(jsonc.parse(deep).to_python(), {"a": {"b": {"c": 1}}})
+        crlf = jsonc.ensure_group(SAMPLE.replace("\n", "\r\n"), ("G",))
+        self.assertEqual(crlf.count("\r\n"), crlf.count("\n"))
+        with self.assertRaises(KeyError):
+            jsonc.ensure_group(SAMPLE, ("ServerName",))  # a value, not a group
+
     def test_crlf_is_kept(self):
         crlf = SAMPLE.replace("\n", "\r\n")
         text = jsonc.set_value(crlf, ("NewKey",), "1")
@@ -121,6 +140,40 @@ class SchemaTest(unittest.TestCase):
             self.field("Episode3DefeatPlayerMeseta").check([1, 2, 3])
         with self.assertRaises(ValueError):
             self.field("CardAuctionSize").check([8, 6])
+
+    def test_connection_limits(self):
+        # Same defaults and limits as ConnectionLimitConfig::from_json (src/ConnectionLimiter.cc)
+        expected = {"Enabled": True, "MaxConnectionsPerMinute": 30, "CooldownMinutes": 10,
+                    "MaxConnectionsPerAddress": 10, "ExemptAddresses": ["127.0.0.0/8"]}
+        for key, default in expected.items():
+            field = self.field("ConnectionLimits." + key)
+            self.assertTrue(field.optional, key)
+            self.assertEqual(field.default, default, key)
+            self.assertEqual(field.apply, schema.RELOAD, key)
+        self.assertIn("ConnectionLimits", schema.form_top_level_keys())  # not under "Other settings"
+        for key, low, high in (("MaxConnectionsPerMinute", 1, 100000), ("CooldownMinutes", 1, 10080),
+                               ("MaxConnectionsPerAddress", 0, 100000)):
+            field = self.field("ConnectionLimits." + key)
+            self.assertEqual(field.check(low), low)
+            self.assertEqual(field.check(high), high)
+            with self.assertRaises(ValueError):
+                field.check(low - 1)
+            with self.assertRaises(ValueError):
+                field.check(high + 1)
+        exempt = self.field("ConnectionLimits.ExemptAddresses")
+        self.assertEqual(exempt.check(["127.0.0.0/8", "192.168.1.0/24", "10.0.0.5"]),
+                         ["127.0.0.0/8", "192.168.1.0/24", "10.0.0.5"])
+        self.assertEqual(exempt.check([]), [])
+        for bad in (["1.2.3"], ["192.168.0.0/16", "192.168.1.0/24"], ["10.0.0.5", "10.0.0.5"]):
+            with self.assertRaises(ValueError):
+                exempt.check(bad)
+
+    @unittest.skipUnless(os.path.exists(EXAMPLE), "config.example.json is not here")
+    def test_example_has_connection_limit_defaults(self):
+        with open(EXAMPLE, encoding="utf-8", newline="") as f:
+            value = jsonc.parse(f.read()).to_python()
+        for key, item in value["ConnectionLimits"].items():
+            self.assertEqual(self.field("ConnectionLimits." + key).default, item, key)
 
 
 class CaelumFilesTest(unittest.TestCase):

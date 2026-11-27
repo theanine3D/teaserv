@@ -1367,7 +1367,8 @@ static asio::awaitable<HandlerResult> S_44_A6(std::shared_ptr<Client> c, Channel
         "{}.{}.{}{}", basename, is_download ? "download" : "online", phosg::now(), extension);
 
     for (size_t x = 0; x < output_filename.size(); x++) {
-      if (output_filename[x] < 0x20 || output_filename[x] > 0x7E || output_filename[x] == '/') {
+      // The name comes from the remote server; '\' and ':' are path syntax on Windows
+      if (output_filename[x] < 0x20 || output_filename[x] > 0x7E || is_unsafe_filename_char(output_filename[x])) {
         output_filename[x] = '_';
       }
     }

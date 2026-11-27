@@ -146,6 +146,14 @@ class Field:
                     out.append(item_check(item) if item_check else item)
                 except ValueError as e:
                     raise ValueError("Line %d: %s" % (number, e))
+            if opt.get("no_overlap"):
+                # The server refuses overlapping ranges (IPV4RangeSet), which would stop `reload config`
+                networks = [ipaddress.IPv4Network(str(item), strict=False) for item in out]
+                for i, first in enumerate(networks):
+                    for j in range(i + 1, len(networks)):
+                        if first.overlaps(networks[j]):
+                            raise ValueError("Lines %d and %d overlap (%s and %s); keep only one of them." % (
+                                i + 1, j + 1, out[i], out[j]))
             return out
         if kind == "intlist":
             count = opt.get("count")
@@ -242,6 +250,29 @@ TOPICS = [
               help="How long a player may send nothing before the server checks that they are still there."),
         Field("ClientIdleTimeout", "Disconnect silent players after (seconds)", "seconds", min=2, max=86400,
               help="Must be longer than the ping time, so that a player can answer the ping."),
+    ]),
+    # src/ConnectionLimiter.hh; the server reads these on `reload config`
+    ("Connection limits", "Protection against players or scripts that reconnect over and over. Covers the game, patch and Dolphin/modem ports and the modpack download server, which keeps "
+                          "its own count. Empty fields use the server's defaults.", [
+        Field(("ConnectionLimits", "Enabled"), "Limit connections per address", "bool", optional=True, default=True,
+              help="Off: no limits at all. Leave on when the server is reachable from the Internet."),
+        Field(("ConnectionLimits", "MaxConnectionsPerMinute"), "New connections per minute per address", "int",
+              optional=True, default=30, min=1, max=100000,
+              help="One login takes about 3 to 5 connections, and players behind the same router or mobile carrier "
+                   "share an address, so keep this generous. The next connection over the limit starts a cooldown. "
+                   "Empty: the default, 30."),
+        Field(("ConnectionLimits", "CooldownMinutes"), "Cooldown (minutes)", "int", optional=True, default=10,
+              min=1, max=10080,
+              help="How long an address that went over the limit is refused. Connections it already has stay open, "
+                   "and attempts during the cooldown do not make it longer. Empty: the default, 10."),
+        Field(("ConnectionLimits", "MaxConnectionsPerAddress"), "Open connections per address", "int", optional=True,
+              default=10, min=0, max=100000,
+              help="How many connections one address may hold at the same time. 0: no limit. Empty: the default, 10."),
+        Field(("ConnectionLimits", "ExemptAddresses"), "Never limit these addresses", "lines", optional=True,
+              default=["127.0.0.0/8"], item=banned_range_item, no_overlap=True,
+              help="One address (1.2.3.4) or range (192.168.1.0/24) per line. Add your home network if friends "
+                   "connect from it. Ranges must not overlap. An emptied list (once saved) exempts nobody, not even "
+                   "this PC."),
     ]),
     ("Accounts", "Who may log in.", [
         Field("AllowUnregisteredUsers", "Let anyone log in", "bool",

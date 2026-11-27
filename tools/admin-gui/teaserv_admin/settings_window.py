@@ -1481,6 +1481,8 @@ class SettingsWindow(tk.Toplevel):
                     if value_text is None:
                         text = jsonc.remove_value(text, edit_path)
                     else:
+                        # Settings inside a group the file does not have yet (for example ConnectionLimits)
+                        text = jsonc.ensure_group(text, edit_path[:-1])
                         text = jsonc.set_value(text, edit_path, value_text)
                 jsonc.parse(text)  # the result must still be a readable file
             # Media files first: config.json must never name a file that is not there yet

@@ -747,6 +747,11 @@ std::shared_ptr<Login> AccountIndex::from_bb_credentials(
   if (username.empty() || (password && password->empty())) {
     throw no_username();
   }
+  // BB usernames become part of save filenames (system/players/player_<username>_<n>.psochar etc.), so a name with
+  // path syntax could reach other accounts' files or folders outside system/players
+  if (!is_safe_filename_component(username)) {
+    throw no_username();
+  }
 
   try {
     std::shared_lock g(this->lock);

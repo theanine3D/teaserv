@@ -624,6 +624,24 @@ void DataIndex::load_config_early() {
     this->banned_ipv4_ranges = std::make_shared<IPV4RangeSet>();
   }
 
+  {
+    const phosg::JSON* limits_json = nullptr;
+    try {
+      limits_json = &this->config_json->at("ConnectionLimits");
+    } catch (const std::out_of_range&) {
+    }
+    auto limits = std::make_shared<ConnectionLimitConfig>(ConnectionLimitConfig::from_json(limits_json));
+    if (limits->enabled) {
+      config_log.info_f("Connection limits: {} new connections per minute per address (then {} minutes cooldown), "
+                        "{} open connections per address",
+          limits->max_attempts_per_window, limits->cooldown_usecs / 60000000,
+          limits->max_concurrent ? std::to_string(limits->max_concurrent) : std::string("unlimited"));
+    } else {
+      config_log.info_f("Connection limits are off");
+    }
+    this->connection_limits = limits;
+  }
+
   this->client_ping_interval_usecs = this->config_json->get_int("ClientPingInterval", 30000000);
   this->client_idle_timeout_usecs = this->config_json->get_int("ClientIdleTimeout", 60000000);
   this->patch_client_idle_timeout_usecs = this->config_json->get_int("PatchClientIdleTimeout", 300000000);

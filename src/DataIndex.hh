@@ -20,6 +20,7 @@
 #include "Episode3/LobbyMedia.hh"
 #include "Episode3/Tournament.hh"
 #include "GSLArchive.hh"
+#include "ConnectionLimiter.hh"
 #include "IPV4RangeSet.hh"
 #include "ItemNameIndex.hh"
 #include "ItemParameterTable.hh"
@@ -276,6 +277,7 @@ struct DataIndex {
   std::vector<Ep3LobbyBannerEntry> ep3_lobby_banners;
 
   std::shared_ptr<const IPV4RangeSet> banned_ipv4_ranges;
+  std::shared_ptr<const ConnectionLimitConfig> connection_limits; // Teaserv "ConnectionLimits" (ConnectionLimiter.hh)
 
   phosg::JSON team_reward_defs_json;
 

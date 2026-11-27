@@ -114,6 +114,11 @@ public:
   std::string load_caelum_modpack_manifest() const;
   void update_caelum_card_mods(const std::string& manifest, bool log_all);
 
+  // Per-IP connection limits (ConnectionLimiter.hh): one table for the game, patch and IP-stack ports, one for the
+  // modpack download server, so pack downloads do not use up an address's login allowance
+  std::shared_ptr<ConnectionLimiter> connection_limiter = ConnectionLimiter::create();
+  std::shared_ptr<ConnectionLimiter> modpack_http_connection_limiter = ConnectionLimiter::create();
+
   // Caelum voice chat (CaelumVoiceServer.cc). The server relays connection messages only, never voice.
   std::unique_ptr<caelum::voice::TurnServer> caelum_voice_turn;
   void caelum_voice_start_relay();
