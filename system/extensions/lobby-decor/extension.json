@@ -1,10 +1,14 @@
 {
   "id": "lobby-decor",
+  "name": "Lobby decoration",
+  "description": "Shows a decoration in retail Episode 3 lobbies and adds $decor and $season for players allowed to change lobby events.",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",
   "permissions": ["commands", "events", "chat.reply", "scene.media", "scene.event"],
-  "assets": {
-    "checker": {"texture": "assets/checker.bmp"}
+  "assets": {"checker": {"texture": "assets/checker.bmp"}},
+  "settings": {
+    "show_on_join": {"type": "boolean", "label": "Show when a player enters", "description": "Off: the decoration appears only after $decor show.", "default": true},
+    "spot": {"type": "string", "label": "Where", "description": "Place in the lobby for the decoration.", "default": "teleporter-west", "max_bytes": 32, "choices": [{"value": "counter-south", "label": "Counter south"}, {"value": "counter-west", "label": "Counter west"}, {"value": "counter-north", "label": "Counter north"}, {"value": "counter-east", "label": "Counter east"}, {"value": "counter-northwest", "label": "Counter northwest"}, {"value": "inside-counter", "label": "Inside counter"}, {"value": "teleporter-west", "label": "Teleporter west"}, {"value": "teleporter-east", "label": "Teleporter east"}, {"value": "banner-south", "label": "Banner south"}, {"value": "banner-north", "label": "Banner north"}, {"value": "floor-banners", "label": "Floor banners"}, {"value": "south-platform", "label": "South platform"}, {"value": "jukebox", "label": "Jukebox"}, {"value": "battle-west", "label": "Battle west"}, {"value": "battle-east", "label": "Battle east"}, {"value": "battle-southeast", "label": "Battle southeast"}, {"value": "battle-southwest", "label": "Battle southwest"}, {"value": "battle-wall", "label": "Battle wall"}]}
   }
 }

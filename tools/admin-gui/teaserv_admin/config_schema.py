@@ -363,7 +363,7 @@ def all_fields():
 
 
 # Keys with a page of their own in the Settings window (not shown under "Other settings")
-PAGE_KEYS = {"Episode3LobbyBanners"}
+PAGE_KEYS = {"Episode3LobbyBanners", "Extensions"}
 
 
 def form_top_level_keys():

@@ -1,5 +1,7 @@
 {
   "id": "game-audit",
+  "name": "Game audit (test)",
+  "description": "Counts games opened, closed and joined, and writes them to the server log. For testing the extension host.",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",

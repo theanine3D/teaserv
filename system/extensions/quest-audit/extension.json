@@ -1,5 +1,7 @@
 {
   "id": "quest-audit",
+  "name": "Quest audit (test)",
+  "description": "Logs quest assignment and loading events. For testing the extension host.",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",

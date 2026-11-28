@@ -1,5 +1,7 @@
 {
   "id": "package-audit",
+  "name": "Package audit (test)",
+  "description": "Logs when packages are loaded and unloaded. For testing the extension host.",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",

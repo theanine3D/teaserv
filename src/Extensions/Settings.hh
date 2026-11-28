@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace teaserv::extensions {
 
@@ -16,6 +17,10 @@ struct SettingDefinition {
   int64_t min = INT64_MIN;
   int64_t max = INT64_MAX;
   size_t max_bytes = 1024;
+  // Allowed values (integer and string settings only). Empty: any value within the bounds. Defaults and overrides
+  // must be one of them. Manifest-only "label", "description" and per-choice labels are for administration tools
+  // (Teaserv Admin's Extensions page); the host validates them but never passes them to scripts.
+  std::vector<SettingValue> choices = {};
 };
 struct Setting {
   std::string type;

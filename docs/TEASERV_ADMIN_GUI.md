@@ -95,8 +95,8 @@ that starts with `FAILED:`.
 
 ## Settings
 
-The Settings window shows `system/config.json` as labelled fields grouped by topic: General, Network, Accounts, Lobby
-events, Episode 3, Games, Logging, Statistics. Each field has a short explanation.
+The Settings window shows `system/config.json` as labelled fields grouped by topic: General, Network, Connection
+limits, Accounts, Lobby events, Episode 3, Games, Logging, Statistics, Extensions. Each field has a short explanation.
 
 - **Checks.** Values are checked before saving: number ranges, the 16-character server name, IP addresses, port
   numbers, list sizes. A value that fails is not saved, and the window shows the field and the reason.
@@ -144,15 +144,48 @@ events, Episode 3, Games, Logging, Statistics. Each field has a short explanatio
   box's own value, else the External address (Network), which must then be an IPv4 address; Save refuses
   otherwise. Typed addresses are kept in `caelum-modpacks-admin.json` and return when the box is turned off. Turning
   the server on or changing its port needs a server restart.
+- **Extensions** manages the Lua extension packages in `system/extensions/` and the `Extensions` group of
+  `config.json` (see "Extensions" below).
 - **Other settings** is the fallback for every key that has no field: choose a key and edit its text exactly as it is
-  in the file (for example `PortConfiguration`, the proxy destinations, quest and item tables, the `Extensions`
-  group). The text is checked for mistakes before it is saved. A button opens `config.json` in your text editor.
+  in the file (for example `PortConfiguration`, the proxy destinations, quest and item tables). The text is checked for mistakes before it is saved. A button opens `config.json` in your text editor.
   `Episode3LobbyBanners` is not listed here; it has its own page.
 - **Admin program** holds the program's own settings: server folder, server program, folders with DLLs, start the
   server with the program, the stop time limit, how long logs are kept, how often live numbers are fetched.
 
 If `config.json` has a mistake that makes it unreadable, the window says where (line and column) and shows no
 fields until it is fixed.
+
+### Extensions
+
+The **Extensions** page lists every package folder in `system/extensions/` (a folder with an `extension.json`) with
+its name, folder, version and status. Select one to see its description, the permissions it asks for and its
+settings.
+
+- **Extension host.** "Run extensions on this server" is `Extensions.Enabled`; off, no package runs. The page also
+  edits the time zone for schedules (`TimeZone`: this PC's or UTC), the Meseta limits for extensions (`Economy`:
+  `MaxGrant`, `DailyLimitPerPackage`, `BalanceCap`; empty = the server's default) and the scene switches (`Scenes`).
+- **Turn on / off.** Turning a package on shows the permissions it asks for (for example "give players Meseta") and
+  asks whether to allow them; the answer becomes the package's `grants`. A new version that asks for more permissions
+  is marked "asks for new permissions" and does not run until you press **Allow the new permissions**. At most 16
+  packages can run. **Move up / Move down** set the order of the `Packages` list; on save, packages are also moved
+  after the packages they depend on, and a package whose dependency is off is refused.
+- **Settings** come from the package's `extension.json` (see [extensions](EXTENSIONS.md), "Per-package settings"):
+  each shows its label, description, default and allowed range or choices. Choices are a drop-down list. **Use the
+  default** removes the value from `config.json`. Values are checked with the server's rules before saving (type,
+  range, choices, length in bytes, required settings, the 16 KiB total), and the server checks them again when it
+  loads the packages. Values are written to `Extensions.Packages[].Settings`.
+- **Add from a folder... / Add from a ZIP file...** check the package (id, API version, entry script, permissions,
+  settings declarations, size; links and ZIP entries that would land outside the folder are refused) and copy it to
+  `system/extensions/<id>/` at once. It stays off until you turn it on and save. Adding a package with the id of an
+  installed one asks first and moves the old folder to `config-backups/removed-extensions/`.
+- **Remove...** asks first; on save the package is turned off and its folder is moved to
+  `config-backups/removed-extensions/<id>.<date>` (move it back to undo). Its saved data in `system/extensions-state/`
+  is kept. A package that is on in `config.json` but has no folder is shown as missing and can be removed from the list.
+- **Apply now** after saving sends `reload config` and then `extensions reload`; a failed reload keeps the extensions
+  that were running and the window shows the server's message.
+
+The page writes the whole `Extensions` group when something on it changed (other keys in the group and in each
+package entry are kept; comments inside the group are not). It never runs package code.
 
 ### Episode 3 lobby media
 
@@ -318,6 +351,8 @@ program says so.
 | `config-backups/` | Copies of `config.json`, the Caelum files and replaced lobby media files from before each save |
 | `system/config.json`, `system/caelum-lobbies.txt`, `system/caelum-modpacks.txt` | Only when you press Save |
 | `system/ep3/banners/` | Lobby media files you chose on the Episode 3 lobby media page, when you press Save |
+| `system/extensions/<id>/` | Packages you add on the Extensions page (copied at once) |
+| `config-backups/removed-extensions/` | Package folders removed or replaced on the Extensions page |
 | `system/stats/YYYY-MM.jsonl` | Written by the server, read by the Statistics window |
 | `teaserv-admin-settings.json` beside this installation | The program's own settings |
 
@@ -334,6 +369,8 @@ program says so.
 | `teaserv_admin/field_editors.py`, `settings_window.py` | Settings window |
 | `teaserv_admin/caelum_files.py` | Reading, checking and writing the Caelum text files |
 | `teaserv_admin/lobby_media.py` | The lobby media list and the server's checks for its files (sizes, PRS, BMP to GVM) |
+| `teaserv_admin/extensions_admin.py` | Extension packages: finding, checking (the server's manifest and settings rules), adding, removing; the `Extensions` group |
+| `teaserv_admin/extensions_panel.py` | The Extensions page |
 | `teaserv_admin/accounts_window.py` | Accounts window: reading `system/licenses`, roles, the commands it sends |
 | `teaserv_admin/console_window.py`, `logs_window.py`, `stats_window.py`, `control_window.py` | The other windows |
 | `teaserv_admin/stats.py` | Reading `system/stats` and grouping it for the graphs |
@@ -350,7 +387,13 @@ python tools/admin-gui/tests/failure_check.py --server-dir DIR --server-exe FILE
 python tools/admin-gui/tests/tray_check.py --server-dir DIR --out DIR [--server-exe FILE] [--extra-path FOLDERS]
 python tools/admin-gui/tests/hidden_desktop.py python tools/admin-gui/tests/gui_walkthrough.py --server-dir DIR --out DIR [...]
 python tools/admin-gui/tests/hidden_desktop.py python tools/admin-gui/tests/lobby_media_check.py --out DIR [--server-exe FILE] [--extra-path FOLDERS]
+python tools/admin-gui/tests/hidden_desktop.py python tools/admin-gui/tests/extensions_gui_check.py --server-exe FILE --data DIR --out DIR [--extra-path FOLDERS]
 ```
+
+`extensions_gui_check.py` drives the Extensions page on a fresh copy of a server's data (from `--data`, which is not
+changed; accounts, keys and modpacks are left out) with the repository's packages: it turns packages on, refuses
+invalid values, saves, uses defaults, adds a package from a ZIP and removes one, then runs the server with
+`extensions check` on the saved `config.json`.
 
 The unit tests include the lobby media checks; with `TEASERV_EXE` (default `build/server-on/teaserv.exe`) and, for a
 MinGW build, `TEASERV_EXTRA_PATH` set, they also compare the BMP-to-GVM encoder and the compressed sizes with the server

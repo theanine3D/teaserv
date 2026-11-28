@@ -1,14 +1,16 @@
 {
   "id": "daily-reward",
+  "name": "Daily login reward",
+  "description": "Gives Episode 3 players Meseta once a day when they log in, with an optional bonus for logging in on several days in a row.",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",
   "permissions": ["events", "players.store", "economy.meseta", "chat.reply"],
   "dependencies": [],
   "settings": {
-    "meseta_per_day": {"type": "integer", "default": 1000, "min": 1, "max": 1000000},
-    "streak_bonus": {"type": "integer", "default": 0, "min": 0, "max": 1000000},
-    "streak_max_days": {"type": "integer", "default": 7, "min": 1, "max": 365},
-    "message": {"type": "string", "default": "Daily login reward:", "max_bytes": 120}
+    "meseta_per_day": {"type": "integer", "label": "Meseta per day", "default": 1000, "min": 1, "max": 1000000},
+    "streak_bonus": {"type": "integer", "label": "Extra Meseta per day in a row", "description": "Added for each day of an unbroken streak. 0: no streak bonus.", "default": 0, "min": 0, "max": 1000000},
+    "streak_max_days": {"type": "integer", "label": "Longest counted streak (days)", "description": "The bonus stops growing after this many days in a row.", "default": 7, "min": 1, "max": 365},
+    "message": {"type": "string", "label": "Message", "description": "Shown to the player before the amount.", "default": "Daily login reward:", "max_bytes": 120}
   }
 }

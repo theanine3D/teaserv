@@ -84,6 +84,33 @@ int main() {
     rejects([&] { resolve_settings(boundary, {}); });
     auto extremes = resolve_settings({{"min", {"integer", false, INT64_MIN}}, {"max", {"integer", false, INT64_MAX}}}, {});
 
+    // Choices (Teaserv Admin's Extensions page shows them as a list): defaults and overrides must be one of them
+    SettingsSchema chosen{
+        {"period", {"string", false, std::string("week"), INT64_MIN, INT64_MAX, 5,
+                       {std::string("week"), std::string("month")}}},
+        {"weekday", {"integer", false, int64_t(6), 0, 7, 1024, {int64_t(0), int64_t(1), int64_t(6), int64_t(7)}}}};
+    auto picked = resolve_settings(chosen, {{"period", std::string("month")}});
+    check(std::get<std::string>(*picked.at("period").value) == "month", "choice override lost");
+    check(std::get<int64_t>(*picked.at("weekday").value) == 6, "choice default lost");
+    rejects([&] { resolve_settings(chosen, {{"period", std::string("day")}}); });
+    rejects([&] { resolve_settings(chosen, {{"weekday", int64_t(3)}}); }); // in bounds, not a choice
+    auto bad_choices = chosen;
+    bad_choices.at("period").default_value = std::string("year");
+    rejects([&] { resolve_settings(bad_choices, {{"period", std::string("week")}}); }); // default must be a choice
+    bad_choices = chosen;
+    bad_choices.at("weekday").choices.emplace_back(int64_t(8)); // out of bounds
+    rejects([&] { resolve_settings(bad_choices, {}); });
+    bad_choices = chosen;
+    bad_choices.at("weekday").choices.emplace_back(int64_t(1)); // duplicate
+    rejects([&] { resolve_settings(bad_choices, {}); });
+    bad_choices = chosen;
+    bad_choices.at("period").choices.emplace_back(int64_t(1)); // wrong type
+    rejects([&] { resolve_settings(bad_choices, {}); });
+    rejects([] { resolve_settings({{"flag", {"boolean", false, true, INT64_MIN, INT64_MAX, 1024, {true, false}}}}, {}); });
+    SettingsSchema many{{"n", {"integer"}}};
+    for (int64_t z = 0; z < 65; z++) many.at("n").choices.emplace_back(z);
+    rejects([&] { resolve_settings(many, {}); });
+
     TestHost host;
     Package package{"settings-test", "1", R"(
       assert(extensions.setting('enabled') == false)

@@ -1,8 +1,14 @@
 -- A shared decoration is identified by (package, lobby, key). Repeating a join
 -- updates the same logical object; it does not consume another native slot.
+-- Settings (extension.json; Teaserv Admin's Extensions page edits them):
+--   show_on_join  show the decoration when a player enters (default on)
+--   spot          where it stands, one of the lobby's scene slots (default teleporter-west)
+local show_on_join = extensions.setting("show_on_join")
+local spot = extensions.setting("spot")
+
 extensions.on("lobby_join", function()
-  if extensions.scene_capabilities().native_ep3_media then
-    extensions.scene_spawn("welcome", "checker", "teleporter-west")
+  if show_on_join and extensions.scene_capabilities().native_ep3_media then
+    extensions.scene_spawn("welcome", "checker", spot)
   end
 end)
 
@@ -11,7 +17,7 @@ extensions.command("decor", {permission = "change-event", cooldown_ms = 1000}, f
   if args == "remove" then
     ok, reason = extensions.scene_remove("welcome")
   elseif args == "show" then
-    ok, reason = extensions.scene_spawn("welcome", "checker", "teleporter-west")
+    ok, reason = extensions.scene_spawn("welcome", "checker", spot)
   else
     extensions.reply("Usage: decor show|remove (retail Episode 3 lobby)")
     return
@@ -36,7 +42,7 @@ extensions.command("decortimed", {permission = "change-event", cooldown_ms = 100
   help = "Show the welcome decoration for a bounded number of seconds.",
   arguments = {{name = "seconds", type = "integer", min = 1, max = 3600}}
 }, function(ctx, raw, args)
-  local ok, reason = extensions.scene_spawn("welcome", "checker", "teleporter-west", args.seconds * 1000)
+  local ok, reason = extensions.scene_spawn("welcome", "checker", spot, args.seconds * 1000)
   extensions.reply(ok and "Temporary decoration updated." or reason)
 end)
 

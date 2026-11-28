@@ -96,6 +96,16 @@ SettingValue setting_value(const phosg::JSON& value) {
   throw std::runtime_error("setting values must be booleans, integers, or strings");
 }
 
+// Display text in manifests (package name/description, setting labels): bounded UTF-8 without control characters
+void check_manifest_text(const phosg::JSON& value, size_t max_bytes, const std::string& what) {
+  if (!value.is_string()) throw std::runtime_error(what + " must be a string");
+  const auto& text = value.as_string();
+  if (text.size() > max_bytes) throw std::runtime_error(what + " is too long");
+  for (unsigned char ch : text) {
+    if (ch < 0x20 && ch != '\n') throw std::runtime_error(what + " contains control characters");
+  }
+}
+
 Settings read_settings(const phosg::JSON& manifest, const phosg::JSON& entry) {
   auto definitions = manifest.get("settings", phosg::JSON::dict());
   auto overrides = entry.get("Settings", phosg::JSON::dict());
@@ -116,6 +126,23 @@ Settings read_settings(const phosg::JSON& manifest, const phosg::JSON& entry) {
         auto max_bytes = setting_integer(*value);
         if (max_bytes < 1 || max_bytes > 1024) throw std::runtime_error("setting max_bytes must be 1..1024");
         definition.max_bytes = max_bytes;
+      } else if (key == "label" || key == "description") {
+        // Text for administration tools only (Teaserv Admin); never given to scripts
+        check_manifest_text(*value, key == "label" ? 64 : 512, "setting " + key);
+      } else if (key == "choices" && (definition.type == "integer" || definition.type == "string")) {
+        // Each entry is a value, or {"value": v, "label": "text shown in Teaserv Admin"}
+        if (!value->is_list() || value->as_list().empty()) throw std::runtime_error("setting choices must be a non-empty list");
+        for (const auto& choice : value->as_list()) {
+          if (choice->is_dict()) {
+            for (const auto& [choice_key, choice_value] : choice->as_dict()) {
+              if (choice_key == "label") check_manifest_text(*choice_value, 64, "choice label");
+              else if (choice_key != "value") throw std::runtime_error("setting choices accept only value and label");
+            }
+            definition.choices.emplace_back(setting_value(choice->at("value")));
+          } else {
+            definition.choices.emplace_back(setting_value(*choice));
+          }
+        }
       } else {
         throw std::runtime_error("unknown or inapplicable setting schema option");
       }
@@ -324,6 +351,11 @@ std::deque<std::string> Manager::stage_config(bool activate, const std::string& 
         if (manifest.at("id").as_string() != id || manifest.at("api_version").as_int() != 1) {
           throw std::runtime_error("manifest ID mismatch or unsupported API version: " + id);
         }
+        // Optional display text for Teaserv Admin's Extensions page
+        auto display_name = manifest.get("name", phosg::JSON());
+        auto display_description = manifest.get("description", phosg::JSON());
+        if (!display_name.is_null()) check_manifest_text(display_name, 64, "package name");
+        if (!display_description.is_null()) check_manifest_text(display_description, 512, "package description");
         auto dependencies = manifest.get("dependencies", phosg::JSON::list());
         for (const auto& dependency : dependencies.as_list()) {
           if (!staged.count(dependency->as_string())) {

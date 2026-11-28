@@ -1,5 +1,7 @@
 {
   "id": "pets",
+  "name": "Pets",
+  "description": "Lets Caelum players pick a pet that follows them in Caelum-only lobbies ($pet). The pets come from pets.txt and a server modpack.",
   "version": "0.3.0",
   "api_version": 1,
   "entry": "main.lua",
@@ -7,8 +9,8 @@
   "dependencies": [],
   "data_files": ["pets.txt"],
   "settings": {
-    "choices": {"type": "string", "max_bytes": 1024, "default": ""},
-    "side": {"type": "integer", "default": 9, "min": -100, "max": 100},
-    "behind": {"type": "integer", "default": 6, "min": -100, "max": 100}
+    "choices": {"type": "string", "label": "More pets", "description": "Extra pets without editing pets.txt: name:model.bml:part:idle:walk:scale_percent:who entries separated by commas. pets.txt wins a name listed in both.", "default": "", "max_bytes": 1024},
+    "side": {"type": "integer", "label": "Distance to the side", "description": "How far beside the player the pet walks.", "default": 9, "min": -100, "max": 100},
+    "behind": {"type": "integer", "label": "Distance behind", "description": "How far behind the player the pet walks.", "default": 6, "min": -100, "max": 100}
   }
 }

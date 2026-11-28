@@ -31,6 +31,24 @@ void validate_value(const std::string& name, const SettingDefinition& definition
       throw std::runtime_error("oversized or NUL-containing setting: " + name);
     }
   }
+  if (!definition.choices.empty() &&
+      std::find(definition.choices.begin(), definition.choices.end(), value) == definition.choices.end()) {
+    throw std::runtime_error("setting is not one of its choices: " + name);
+  }
+}
+
+void validate_choices(const std::string& name, const SettingDefinition& definition) {
+  if (definition.choices.empty()) return;
+  if (definition.type == "boolean") throw std::runtime_error("boolean settings cannot have choices: " + name);
+  if (definition.choices.size() > 64) throw std::runtime_error("at most 64 choices per setting: " + name);
+  SettingDefinition bounds = definition;
+  bounds.choices.clear();
+  for (size_t z = 0; z < definition.choices.size(); z++) {
+    validate_value(name, bounds, definition.choices[z]);
+    for (size_t y = 0; y < z; y++) {
+      if (definition.choices[y] == definition.choices[z]) throw std::runtime_error("duplicate choice for setting: " + name);
+    }
+  }
 }
 
 } // namespace
@@ -50,6 +68,7 @@ Settings resolve_settings(const SettingsSchema& schema, const std::map<std::stri
     if (definition.min > definition.max || definition.max_bytes < 1 || definition.max_bytes > 1024) {
       throw std::runtime_error("invalid bounds for setting: " + name);
     }
+    validate_choices(name, definition);
     // Invalid defaults reject the schema even when an override would hide them.
     if (definition.default_value)
       validate_value(name, definition, *definition.default_value);

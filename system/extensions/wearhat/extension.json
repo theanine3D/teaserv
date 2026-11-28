@@ -1,5 +1,7 @@
 {
   "id": "wearhat",
+  "name": "Hats",
+  "description": "Lets Caelum players wear a hat in Caelum-only lobbies ($wearhat). The hats come from hats.txt and a server modpack.",
   "version": "0.2.0",
   "api_version": 1,
   "entry": "main.lua",
@@ -7,6 +9,6 @@
   "dependencies": [],
   "data_files": ["hats.txt"],
   "settings": {
-    "choices": {"type": "string", "max_bytes": 1024, "default": ""}
+    "choices": {"type": "string", "label": "More hats", "description": "Extra hats without editing hats.txt: name:model.bml:part:height:scale_percent:tilt:who entries separated by commas. hats.txt wins a name listed in both.", "default": "", "max_bytes": 1024}
   }
 }

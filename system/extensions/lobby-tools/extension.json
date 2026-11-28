@@ -1,5 +1,7 @@
 {
   "id": "lobby-tools",
+  "name": "Lobby tools",
+  "description": "Adds $who (players and session IDs in your lobby) and $xyz (your position, for setting up concerts and scenes).",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",

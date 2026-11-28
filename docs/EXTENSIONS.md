@@ -96,11 +96,45 @@ a dot; at most 16 files, 64 KiB each and 256 KiB together, without NUL bytes. Th
 staged, so `extensions reload` picks up an edit; a listed file that is missing, too large or outside the package folder
 fails staging and keeps the active set. Scripts still have no filesystem access.
 
-Only integer definitions accept `min`/`max`, inclusive, defaulting to the full signed 64-bit range. Only string definitions accept `max_bytes`, 1..1024, default 1024. Empty strings are allowed; embedded NUL is refused. Unknown schema options, inapplicable constraints, invalid defaults, reversed bounds, or undeclared overrides reject staging. Names use the same 1..64 lowercase ASCII letter/digit/hyphen/underscore rules as package IDs. At most 64 settings are declared per package, with a combined 16 KiB allowance for names and resolved values (booleans/integers count as eight bytes each); the existing 16 KiB manifest limit also applies.
+Only integer definitions accept `min`/`max`, inclusive, defaulting to the full signed 64-bit range. Only string definitions accept `max_bytes`, 1..1024, default 1024. Empty strings are allowed; embedded NUL is refused. Unknown schema options (other than `label`, `description` and `choices` above), inapplicable constraints, invalid defaults, reversed bounds, or undeclared overrides reject staging. Names use the same 1..64 lowercase ASCII letter/digit/hyphen/underscore rules as package IDs. At most 64 settings are declared per package, with a combined 16 KiB allowance for names and resolved values (booleans/integers count as eight bytes each); the existing 16 KiB manifest limit also applies.
 
 After editing server configuration, run `reload config`, then `extensions check`, then `extensions reload` when ready to activate. Configuration reload updates Newserv's config snapshot; existing extension instances keep their prior values until package activation. Check stages the settings and script together without changing active instances or saving state. Invalid settings preserve the previous active set on package reload. Omitting `settings`/`Settings` retains existing package behavior. Changing settings alone does not increment persistent data versions or trigger an equal-version migration.
 
 `extensions info ID` lists setting names, types, and set/unset status; it omits values. Host validation errors also omit values. Scripts can deliberately log or send setting values if their other APIs permit it. Settings are not written into extension storage automatically and scripts have no configuration-write API.
+
+### Settings in Teaserv Admin
+
+Teaserv Admin's **Settings → Extensions** page turns packages on and off, allows their permissions, adds and removes
+package folders, and builds a form for each package's settings from its manifest (see
+[Teaserv Admin](TEASERV_ADMIN_GUI.md)). The values stay where the server reads them, in
+`Extensions.Packages[].Settings` of `config.json`; the page checks them with the same rules as the host before it
+saves. Three optional keys in a setting definition, and two at the top of the manifest, describe them for the page:
+
+```json
+{
+  "id": "player-of-the-period",
+  "name": "Player of the Week",
+  "description": "Counts Episode 3 battle wins and gives the leader a prize.",
+  "settings": {
+    "period": {"type": "string", "label": "Period", "default": "week", "max_bytes": 5,
+               "choices": [{"value": "week", "label": "Week (Monday to Sunday)"}, {"value": "month", "label": "Month"}]},
+    "prize": {"type": "integer", "label": "Prize (Meseta)", "description": "0: no prize.", "default": 100000,
+              "min": 0, "max": 1000000000}
+  }
+}
+```
+
+- `name` (at most 64 bytes) and `description` (at most 512 bytes) of the package, shown in the list.
+- `label` (at most 64 bytes) and `description` (at most 512 bytes) of a setting.
+- `choices` (integer and string settings only): a non-empty list of at most 64 allowed values, each a plain value or
+  `{"value": ..., "label": "..."}` (label at most 64 bytes). Each choice must fit the type, `min`/`max` and
+  `max_bytes`; duplicates are refused. The default and any value in `config.json` must be one of the choices, and the
+  host enforces that, so the page shows a drop-down list.
+
+Display text is UTF-8 without control characters other than line breaks. The host validates it and never passes it to
+scripts; scripts still read only `extensions.setting(name)`. All bundled packages declare labels and descriptions.
+Settings belong in the manifest rather than in a script-readable file: the host validates them before the package
+runs, administrators edit one file, and scripts keep their lack of filesystem access.
 
 ## Script API
 

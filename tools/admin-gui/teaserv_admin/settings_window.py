@@ -1331,11 +1331,13 @@ class Changes:
         self.config_edits = []  # (path, value text or None)
         self.files = []  # (path, new text)
         self.copies = []  # (source file, target path): binary files copied in (lobby media)
+        self.actions = []  # functions run after config.json is written (removed extension folders)
         self.program = {}
-        self.names = {schema.RELOAD: [], schema.RESTART: [], "login": []}
+        # "extensions": applied with "reload config" followed by "extensions reload"
+        self.names = {schema.RELOAD: [], schema.RESTART: [], "login": [], "extensions": []}
 
     def empty(self):
-        return not (self.config_edits or self.files or self.copies or self.program)
+        return not (self.config_edits or self.files or self.copies or self.program or self.actions)
 
 
 class SettingsWindow(tk.Toplevel):
@@ -1376,8 +1378,10 @@ class SettingsWindow(tk.Toplevel):
             if title == "Episode 3":
                 self.panels.append(LobbyMediaPanel(self, self.holder))
         self.other = OtherPanel(self, self.holder)
-        self.panels += [LobbiesPanel(self, self.holder), ModpacksPanel(self, self.holder), self.other,
-                        ProgramPanel(self, self.holder)]
+        from .extensions_panel import ExtensionsPanel  # imports this module's Panel
+        self.panels += [LobbiesPanel(self, self.holder), ModpacksPanel(self, self.holder),
+                        ExtensionsPanel(self, self.holder), self.other, ProgramPanel(self, self.holder)]
+        self.reload_extensions = False
         for panel in self.panels:
             self.topics.insert("end", " " + panel.title)
 
@@ -1496,6 +1500,8 @@ class SettingsWindow(tk.Toplevel):
                 backup = backup_and_write(path, text, self.app.settings.backup_dir)
                 if backup:
                     backups.append(backup)
+            for action in changes.actions:
+                action()
             if changes.program:
                 self.app.settings.values.update(changes.program)
                 self.app.settings.save()
@@ -1510,9 +1516,12 @@ class SettingsWindow(tk.Toplevel):
     def report(self, changes, backups):
         srv = self.app.server
         running = srv.state in (server.RUNNING, server.STARTING)
-        reload_names = changes.names[schema.RELOAD]
+        extension_names = changes.names["extensions"]
+        reload_names = changes.names[schema.RELOAD] + extension_names
         restart_names = changes.names[schema.RESTART]
         login_names = changes.names["login"]
+        if extension_names:
+            self.reload_extensions = True
         parts = ["Saved."]
         if backups:
             parts.append("The previous version is kept in %s." % os.path.dirname(backups[0]))
@@ -1542,11 +1551,17 @@ class SettingsWindow(tk.Toplevel):
         srv = self.app.server
         before = srv.seq
         problem = srv.send_command("reload config")
+        # Extension changes also need the packages staged again; a failed reload keeps the running extensions
+        extensions = self.reload_extensions
+        if not problem and extensions:
+            problem = srv.send_command("extensions reload")
         self.apply_button.pack_forget()
         if problem:
             self.set_status(problem, error=True)
             return
-        self.set_status("Asking the server to read config.json again...")
+        self.reload_extensions = False
+        self.set_status("Asking the server to read config.json again%s..." % (
+            " and reload the extensions" if extensions else ""))
 
         def check():
             # The server prints nothing when the reload worked, and a line starting with FAILED when it did not
@@ -1554,7 +1569,8 @@ class SettingsWindow(tk.Toplevel):
             if failed:
                 self.set_status("The server could not apply the settings: %s" % failed[-1], error=True)
             else:
-                self.set_status("Applied: the server has read config.json again.")
+                self.set_status("Applied: the server has read config.json again%s." % (
+                    " and reloaded the extensions" if extensions else ""))
 
         self.after(2500, check)
 

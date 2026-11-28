@@ -1,15 +1,13 @@
 {
   "id": "server-announcements",
+  "name": "Server announcements",
+  "description": "Announces new games to everyone on the server.",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",
   "permissions": ["commands", "events", "chat.reply", "chat.announce"],
   "dependencies": [],
   "settings": {
-    "game_opened_message": {
-      "type": "string",
-      "default": "A new game is available.",
-      "max_bytes": 200
-    }
+    "game_opened_message": {"type": "string", "label": "New game message", "description": "Sent to everyone when a game opens.", "default": "A new game is available.", "max_bytes": 200}
   }
 }

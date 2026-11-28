@@ -72,10 +72,14 @@ def main():
                          {"id": dependent_id, "grants": ["commands"]}],
         }
         manifest = {
-            "id": package_id, "version": "0.1.0", "api_version": 1, "entry": "main.lua",
+            "id": package_id, "name": "Smoke package", "description": "Display text for Teaserv Admin.",
+            "version": "0.1.0", "api_version": 1, "entry": "main.lua",
             "permissions": ["commands", "commands.read", "scene.media", "lobby.read", "events"],
             "assets": {"checker": {"texture": "checker.bmp"}},
-            "settings": {"count": {"type": "integer", "default": 7, "min": 0, "max": 10},
+            # label/description/choices: administration metadata (Teaserv Admin's Extensions page)
+            "settings": {"count": {"type": "integer", "label": "Count", "description": "Seconds of cooldown.",
+                                   "default": 7, "min": 0, "max": 10,
+                                   "choices": [7, {"value": 8, "label": "Eight"}, 9]},
                          "label": {"type": "string", "required": True, "max_bytes": 64},
                          "enabled": {"type": "boolean", "default": False},
                          "optional": {"type": "string"}},
@@ -239,7 +243,8 @@ def main():
                              dict(good_settings, count=-1), dict(good_settings, unknown=1),
                              dict(good_settings, label=None), dict(good_settings, label="x" * 65),
                              dict(good_settings, label="zero\0byte"), {"count": 8}, [],
-                             dict(good_settings, label={}), dict(good_settings, enabled=1)]:
+                             dict(good_settings, label={}), dict(good_settings, enabled=1),
+                             dict(good_settings, count=10)]:  # within min/max but not one of the choices
             apply_settings(bad_settings)
             failure = command("extensions check")
             require("FAILED:" in failure and "private-setting-value-not-for-diagnostics" not in failure,
@@ -257,12 +262,27 @@ def main():
                 ("label", {"type": "string", "max_bytes": 0}),
                 ("label", {"type": "string", "max_bytes": 1025}),
                 ("label", {"type": "string", "unknown_option": 1}),
-                ("optional", {"type": "array"})]:
+                ("optional", {"type": "array"}),
+                ("count", {"type": "integer", "default": 7, "min": 0, "max": 10, "choices": [7, 8, 9, 11]}),
+                ("count", {"type": "integer", "default": 7, "min": 0, "max": 10, "choices": [7, 8, 9, 8]}),
+                ("count", {"type": "integer", "default": 7, "min": 0, "max": 10, "choices": []}),
+                ("count", {"type": "integer", "default": 6, "min": 0, "max": 10, "choices": [7, 8, 9]}),
+                ("count", {"type": "integer", "default": 7, "choices": [7, 8, {"value": 9, "note": "x"}]}),
+                ("count", {"type": "integer", "default": 7, "choices": [7, 8, "9"]}),
+                ("enabled", {"type": "boolean", "default": False, "choices": [False]}),
+                ("label", {"type": "string", "required": True, "label": "x" * 65}),
+                ("label", {"type": "string", "required": True, "description": "control\x01character"}),
+                ("label", {"type": "string", "required": True, "label": 5})]:
             manifest["settings"] = dict(original_schema, **{name: definition})
             manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
             require("FAILED:" in command("extensions check"), "invalid settings schema accepted")
             require(command("extensions info " + package_id) == original_info, "invalid schema changed active runtime")
         manifest["settings"] = original_schema
+        for key, bad in [("name", "x" * 65), ("description", "x" * 513), ("name", 5)]:
+            manifest[key] = bad
+            manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
+            require("FAILED:" in command("extensions check"), "invalid package display text accepted")
+            manifest[key] = {"name": "Smoke package", "description": "Display text for Teaserv Admin."}[key]
         manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
         apply_settings(dict(good_settings, count=9))
         script_file.write_text(valid_script.replace('== 8)', '== 9)'), encoding="utf-8")

@@ -1,25 +1,14 @@
 {
   "id": "chat-tools",
+  "name": "Chat tools",
+  "description": "Adds $shout (a message to everyone on the server) and $whisper (a private message to one player by session ID).",
   "version": "0.1.0",
   "api_version": 1,
   "storage_version": 1,
   "entry": "main.lua",
-  "permissions": [
-    "commands",
-    "events",
-    "timers",
-    "storage",
-    "chat.reply",
-    "chat.broadcast",
-    "chat.whisper"
-  ],
+  "permissions": ["commands", "events", "timers", "storage", "chat.reply", "chat.broadcast", "chat.whisper"],
   "dependencies": [],
   "settings": {
-    "shout_cooldown_ms": {
-      "type": "integer",
-      "default": 10000,
-      "min": 0,
-      "max": 3600000
-    }
+    "shout_cooldown_ms": {"type": "integer", "label": "Time between shouts (milliseconds)", "description": "How long a player must wait between two $shout messages. 0: no wait.", "default": 10000, "min": 0, "max": 3600000}
   }
 }

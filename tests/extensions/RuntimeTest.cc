@@ -19,6 +19,7 @@ struct TestHost : Host {
   bool extended_media = false;
   std::string scene_owner;
   size_t scene_calls = 0;
+  std::string scene_slot;
   mutable size_t asset_queries = 0;
   mutable std::string queried_owner;
   mutable std::string queried_asset;
@@ -49,11 +50,12 @@ struct TestHost : Host {
     queried_asset = asset;
     return asset_support;
   }
-  SceneResult scene_spawn(const Context&, const std::string& owner, const std::string&, const std::string&, const std::string&, uint32_t lifetime_ms) override {
+  SceneResult scene_spawn(const Context&, const std::string& owner, const std::string&, const std::string&, const std::string& slot, uint32_t lifetime_ms) override {
     if (!media_available) {
       return {false, "unsupported recipient"};
     }
     scene_owner = owner;
+    scene_slot = slot;
     scene_lifetime_ms = lifetime_ms;
     ++scene_calls;
     return {true};
@@ -823,12 +825,33 @@ int main(int argc, char** argv) {
       auto definition = package(source);
       definition.grants.insert("scene.media");
       definition.grants.insert("scene.event");
+      // The settings lobby-decor's extension.json declares (show_on_join, spot)
+      SettingsSchema decor_schema{
+          {"show_on_join", {"boolean", false, true}},
+          {"spot", {"string", false, std::string("teleporter-west"), INT64_MIN, INT64_MAX, 32,
+                       {std::string("teleporter-west"), std::string("teleporter-east")}}}};
+      definition.settings = resolve_settings(decor_schema, {});
+      {
+        // show_on_join off: entering the lobby spawns nothing, $decor show still works
+        TestHost quiet_host;
+        quiet_host.admin = true;
+        quiet_host.media_available = true;
+        auto quiet = definition;
+        quiet.settings = resolve_settings(decor_schema, {{"show_on_join", false}, {"spot", std::string("teleporter-east")}});
+        Runtime silent(quiet_host, quiet);
+        silent.emit("lobby_join", context);
+        check(quiet_host.scene_calls == 0, "show_on_join=false still spawned on join");
+        silent.dispatch("decor", "show", context);
+        check(quiet_host.scene_calls == 1 && quiet_host.scene_slot == "teleporter-east" &&
+                silent.diagnostics().callback_errors == 0, "decor show ignored the spot setting");
+      }
       Runtime example(scene_host, definition);
       example.emit("lobby_join", context);
       check(scene_host.scene_calls == 0, "example ignored unsupported-client capabilities");
       scene_host.media_available = true;
       example.emit("lobby_join", context);
-      check(scene_host.scene_calls == 1, "shipped decoration join handler failed");
+      check(scene_host.scene_calls == 1 && scene_host.scene_slot == "teleporter-west",
+          "shipped decoration join handler failed");
       example.dispatch("decor", "remove", context);
       check(scene_host.scene_calls == 2, "shipped decoration removal failed");
       example.dispatch("decortimed", "10", context);

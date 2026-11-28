@@ -1,5 +1,7 @@
 {
   "id": "command-help",
+  "name": "Command help",
+  "description": "Adds $exthelp and $extusage, which list the extension commands players can use.",
   "version": "0.1.0",
   "api_version": 1,
   "entry": "main.lua",
